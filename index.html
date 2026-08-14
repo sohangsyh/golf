@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>SWINGVISION — AI Golf Pose Trainer</title>
+
+<!-- PWA: installable app metadata -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#07080a" />
+<meta name="background-color" content="#07080a" />
+<link rel="icon" href="icon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="SwingVision" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --gold:#c9a35c;
+    --gold-bright:#e6c789;
+    --emerald:#1f6f54;
+    --emerald-bright:#2e9c78;
+    --bg-0:#07080a;
+    --bg-1:#0d0f12;
+    --panel:rgba(255,255,255,0.035);
+    --panel-border:rgba(255,255,255,0.08);
+    --text-hi:#f3f1ec;
+    --text-mid:#a8a49c;
+    --text-lo:#6b6860;
+    --danger:#c9634f;
+    --good:#4bb583;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(31,111,84,0.18), transparent 60%),
+      radial-gradient(1000px 500px at 100% 0%, rgba(201,163,92,0.10), transparent 55%),
+      var(--bg-0);
+    color:var(--text-hi);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+  .noise{position:fixed;inset:0;pointer-events:none;opacity:.025;z-index:999;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:28px 48px;
+    border-bottom:1px solid var(--panel-border);
+    backdrop-filter:blur(10px);
+    position:sticky;top:0;z-index:50;
+    background:rgba(7,8,10,0.65);
+  }
+  .brand{display:flex;align-items:center;gap:14px;}
+  .brand-mark{
+    width:38px;height:38px;border-radius:10px;
+    background:linear-gradient(135deg,var(--gold-bright),var(--emerald));
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Playfair Display',serif;font-weight:700;color:#07080a;font-size:18px;
+    box-shadow:0 0 24px rgba(201,163,92,0.35);
+  }
+  .brand-text{font-family:'Playfair Display',serif;font-size:22px;letter-spacing:0.5px;font-weight:600;}
+  .brand-text span{color:var(--gold-bright);}
+  .tagline{font-size:12px;color:var(--text-lo);letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+  .status-pill{
+    display:flex;align-items:center;gap:8px;
+    padding:8px 16px;border-radius:999px;
+    border:1px solid var(--panel-border);
+    background:var(--panel);
+    font-size:12.5px;color:var(--text-mid);
+  }
+  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--text-lo);transition:.3s;}
+  .status-dot.on{background:var(--good);box-shadow:0 0 8px var(--good);}
+  .status-dot.err{background:var(--danger);box-shadow:0 0 8px var(--danger);}
+
+  main{max-width:1500px;margin:0 auto;padding:40px 48px 100px;display:grid;grid-template-columns:1.25fr 0.9fr;gap:32px;}
+  @media (max-width:1080px){ main{grid-template-columns:1fr;} }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-radius:20px;
+    padding:26px;
+    backdrop-filter:blur(14px);
+    position:relative;
+  }
+  .panel-title{
+    font-family:'Playfair Display',serif;font-size:19px;font-weight:600;
+    display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;
+  }
+  .panel-title small{font-family:'Inter';font-size:11px;color:var(--text-lo);letter-spacing:1.5px;text-transform:uppercase;font-weight:500;}
+
+  /* LEFT: camera */
+  .stage{
+    position:relative;
+    width:100%;
+    aspect-ratio:4/3;
+    border-radius:14px;
+    overflow:hidden;
+    background:#000;
+    border:1px solid var(--panel-border);
+  }
+  .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);}
+  .stage .hint{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:14px;color:var(--text-mid);text-align:center;padding:30px;
+    background:linear-gradient(180deg,rgba(0,0,0,.2),rgba(0,0,0,.55));
+  }
+  .hint-icon{font-size:34px;opacity:.8;}
+  .btn{
+    appearance:none;border:none;cursor:pointer;
+    font-family:'Inter';font-weight:600;font-size:13.5px;letter-spacing:.3px;
+    padding:12px 22px;border-radius:11px;
+    transition:transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn-gold{background:linear-gradient(135deg,var(--gold-bright),var(--gold));color:#1a1305;box-shadow:0 4px 18px rgba(201,163,92,.25);}
+  .btn-gold:hover{box-shadow:0 6px 26px rgba(201,163,92,.4);}
+  .btn-outline{background:transparent;border:1px solid var(--panel-border);color:var(--text-hi);}
+  .btn-outline:hover{border-color:var(--gold);color:var(--gold-bright);}
+  .btn-danger{background:linear-gradient(135deg,#d97a63,#a8402c);color:#fff;}
+  .btn:disabled{opacity:.35;cursor:not-allowed;}
+
+  .cam-controls{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap;align-items:center;}
+  .rec-indicator{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--danger);margin-left:auto;opacity:0;transition:.2s;}
+  .rec-indicator.on{opacity:1;}
+  .rec-dot{width:9px;height:9px;border-radius:50%;background:var(--danger);animation:pulse 1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+  .phase-track{display:flex;gap:6px;margin-top:16px;}
+  .phase-step{flex:1;text-align:center;padding:9px 4px;border-radius:9px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;
+    background:rgba(255,255,255,.03);border:1px solid var(--panel-border);color:var(--text-lo);transition:.25s;}
+  .phase-step.active{background:rgba(201,163,92,.14);border-color:var(--gold);color:var(--gold-bright);}
+  .phase-step.done{background:rgba(46,156,120,.12);border-color:var(--emerald-bright);color:var(--emerald-bright);}
+
+  /* RIGHT: shot select + standard */
+  .shot-tabs{display:flex;gap:10px;margin-bottom:20px;}
+  .shot-tab{
+    flex:1;padding:14px 8px;border-radius:12px;text-align:center;cursor:pointer;
+    border:1px solid var(--panel-border);background:rgba(255,255,255,.02);
+    font-size:13px;font-weight:600;letter-spacing:.3px;color:var(--text-mid);
+    transition:.2s;
+  }
+  .shot-tab .ic{display:block;font-size:19px;margin-bottom:6px;}
+  .shot-tab:hover{border-color:rgba(201,163,92,.4);}
+  .shot-tab.active{background:linear-gradient(135deg,rgba(201,163,92,.16),rgba(31,111,84,.14));border-color:var(--gold);color:var(--gold-bright);}
+
+  .ghost-wrap{
+    position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;
+    background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
+    border:1px solid var(--panel-border);overflow:hidden;
+  }
+  .ghost-wrap canvas{width:100%;height:100%;}
+  .ghost-label{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-bright);opacity:.85;}
+  .ghost-source{position:absolute;bottom:12px;left:14px;font-size:10.5px;color:var(--text-lo);}
+
+  .upload-row{display:flex;gap:10px;margin-top:16px;}
+  .upload-row input[type=file]{display:none;}
+  .file-label{flex:1;text-align:center;}
+  .small-note{font-size:11.5px;color:var(--text-lo);margin-top:10px;line-height:1.5;}
+
+  .yt-block{margin-top:22px;padding-top:20px;border-top:1px solid var(--panel-border);}
+  .yt-divider{text-align:center;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-lo);margin-bottom:14px;}
+  .yt-input{
+    width:100%;padding:11px 14px;border-radius:10px;
+    background:rgba(255,255,255,.03);border:1px solid var(--panel-border);
+    color:var(--text-hi);font-family:'Inter';font-size:13px;margin-bottom:10px;
+    outline:none;transition:.2s;
+  }
+  .yt-input:focus{border-color:var(--gold);background:rgba(255,255,255,.05);}
+  .yt-time-row{display:flex;gap:10px;}
+  .yt-time{flex:1;margin-bottom:0;}
+  .yt-time-row .btn{flex-shrink:0;white-space:nowrap;}
+
+  /* Results */
+  .results{margin-top:24px;}
+  .score-row{display:flex;align-items:center;gap:22px;}
+  .score-ring{position:relative;width:108px;height:108px;flex-shrink:0;}
+  .score-ring svg{transform:rotate(-90deg);}
+  .score-ring .bg{stroke:rgba(255,255,255,.06);}
+  .score-ring .fg{stroke:url(#scoreGrad);stroke-linecap:round;transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1);}
+  .score-num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .score-num b{font-family:'Playfair Display',serif;font-size:28px;}
+  .score-num span{font-size:9.5px;color:var(--text-lo);letter-spacing:1.5px;text-transform:uppercase;}
+  .score-meta{flex:1;}
+  .score-meta h3{font-family:'Playfair Display',serif;font-size:18px;margin-bottom:4px;}
+  .score-meta p{font-size:12.5px;color:var(--text-mid);}
+
+  .advice-list{list-style:none;margin-top:20px;display:flex;flex-direction:column;gap:10px;}
+  .advice-item{
+    display:flex;gap:12px;align-items:flex-start;
+    padding:13px 15px;border-radius:11px;
+    background:rgba(255,255,255,.025);border:1px solid var(--panel-border);
+    font-size:13px;line-height:1.5;color:var(--text-hi);
+    animation:slideIn .4s ease both;
+  }
+  @keyframes slideIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  .advice-item .tag{
+    flex-shrink:0;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-size:13px;background:rgba(201,163,92,.14);color:var(--gold-bright);
+  }
+  .advice-item.good .tag{background:rgba(46,156,120,.16);color:var(--emerald-bright);}
+  .metric-bars{display:flex;flex-direction:column;gap:9px;margin-top:18px;}
+  .metric-bar-row{display:grid;grid-template-columns:110px 1fr 46px;align-items:center;gap:10px;font-size:11.5px;color:var(--text-mid);}
+  .metric-bar-track{height:6px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden;}
+  .metric-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--emerald-bright),var(--gold-bright));transition:width .8s ease;}
+
+  footer{text-align:center;padding:30px;color:var(--text-lo);font-size:11.5px;letter-spacing:.5px;}
+
+  .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
+  .sensor-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;}
+  .sensor-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;display:flex;flex-direction:column;gap:2px;}
+  .sensor-title small{font-family:'Inter';font-size:10.5px;color:var(--text-lo);letter-spacing:1px;text-transform:uppercase;font-weight:500;}
+  .sensor-title small.connected{color:var(--emerald-bright);}
+  .device-list{display:flex;flex-direction:column;gap:8px;}
+  .device-row{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:10px 13px;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid var(--panel-border);
+    font-size:12.5px;
+  }
+  .device-row .dn{display:flex;align-items:center;gap:8px;}
+  .device-row .dot{width:7px;height:7px;border-radius:50%;background:var(--gold);}
+  .device-row.paired .dot{background:var(--emerald-bright);box-shadow:0 0 6px var(--emerald-bright);}
+  .device-row button{padding:6px 12px;font-size:11.5px;border-radius:8px;}
+  .device-empty{font-size:12px;color:var(--text-lo);padding:10px 2px;}
+  .sensor-readout{margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .sensor-readout div{background:rgba(255,255,255,.03);border:1px solid var(--panel-border);border-radius:9px;padding:8px 4px;text-align:center;}
+  .sensor-readout b{display:block;font-family:'Playfair Display',serif;font-size:14px;}
+  .sensor-readout span{font-size:9px;color:var(--text-lo);text-transform:uppercase;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<div class="noise"></div>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">S</div>
+    <div>
+      <div class="brand-text">SWING<span>VISION</span></div>
+      <div class="tagline">AI Golf Pose Trainer</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button class="btn btn-outline" id="installBtn" style="display:none;">＋ Install App</button>
+    <div class="status-pill"><span class="status-dot" id="modelStatusDot"></span><span id="modelStatusText">Loading pose model…</span></div>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT PANEL: CAMERA -->
+  <section class="panel">
+    <div class="panel-title">Live Camera <small id="camMeta">Skeleton Tracking</small></div>
+
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="hint" id="camHint">
+        <div class="hint-icon">⛳</div>
+        <div>Enable your camera to begin skeleton tracking.<br/>Stand side-on, full body in frame.</div>
+        <button class="btn btn-gold" id="startCamBtn">Enable Camera</button>
+      </div>
+    </div>
+
+    <div class="cam-controls">
+      <button class="btn btn-gold" id="recordBtn" disabled>● Record Swing</button>
+      <button class="btn btn-danger" id="stopBtn" style="display:none;">■ Stop</button>
+      <button class="btn btn-outline" id="resetBtn">Reset Session</button>
+      <div class="rec-indicator" id="recIndicator"><span class="rec-dot"></span>RECORDING</div>
+    </div>
+
+    <div class="phase-track" id="phaseTrack">
+      <div class="phase-step" data-phase="address">Address</div>
+      <div class="phase-step" data-phase="top">Top</div>
+      <div class="phase-step" data-phase="impact">Impact</div>
+      <div class="phase-step" data-phase="finish">Finish</div>
+    </div>
+
+    <div class="sensor-block">
+      <div class="sensor-header">
+        <div class="sensor-title">Club Sensor <small id="sensorSub">Not connected</small></div>
+        <button class="btn btn-outline" id="connectPhoneBtn">Connect</button>
+      </div>
+      <div class="device-list" id="deviceList"></div>
+      <div class="sensor-readout" id="sensorReadout" style="display:none;">
+        <div><b id="phAccMag">0.0</b><span>Accel (g)</span></div>
+        <div><b id="phRotMag">0.0</b><span>Rotation °/s</span></div>
+        <div><b id="phHz">0</b><span>Msgs/s</span></div>
+      </div>
+    </div>
+
+    <div class="results" id="results" style="display:none;">
+      <div class="score-row">
+        <div class="score-ring">
+          <svg width="108" height="108">
+            <defs>
+              <linearGradient id="scoreGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#2e9c78"/>
+                <stop offset="100%" stop-color="#e6c789"/>
+              </linearGradient>
+            </defs>
+            <circle class="bg" cx="54" cy="54" r="46" stroke-width="9" fill="none"/>
+            <circle class="fg" id="scoreCircle" cx="54" cy="54" r="46" stroke-width="9" fill="none" stroke-dasharray="289" stroke-dashoffset="289"/>
+          </svg>
+          <div class="score-num"><b id="scoreNum">0</b><span>MATCH</span></div>
+        </div>
+        <div class="score-meta">
+          <h3 id="scoreHeadline">Analyzing…</h3>
+          <p id="scoreSub">Compared against your selected standard gesture.</p>
+        </div>
+      </div>
+
+      <ul class="advice-list" id="adviceList"></ul>
+
+      <div class="metric-bars" id="metricBars"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT PANEL: STANDARD GESTURE -->
+  <section class="panel">
+    <div class="panel-title">Standard Gesture <small>Reference Pose</small></div>
+
+    <div class="shot-tabs">
+      <div class="shot-tab active" data-shot="swing"><span class="ic">🏌️</span>Swing</div>
+      <div class="shot-tab" data-shot="putting"><span class="ic">🎯</span>Putting</div>
+      <div class="shot-tab" data-shot="chip"><span class="ic">⛳</span>Chip Shot</div>
+    </div>
+
+    <div class="ghost-wrap">
+      <div class="ghost-label" id="ghostPhaseLabel">ADDRESS</div>
+      <canvas id="ghostCanvas"></canvas>
+      <div class="ghost-source" id="ghostSource">Built-in reference</div>
+    </div>
+
+    <div class="upload-row">
+      <label class="btn btn-outline file-label" for="uploadInput">Upload Your Own Gesture (video)</label>
+      <input type="file" id="uploadInput" accept="video/*"/>
+    </div>
+    <div class="small-note" id="uploadStatus">
+      Upload a short side-on video of a swing you want to train against. SwingVision will extract its skeleton and use it as your custom standard for the selected shot type.
+    </div>
+
+    <div class="yt-block">
+      <div class="yt-divider"><span>or pull a clip from YouTube</span></div>
+      <input type="text" id="ytUrl" class="yt-input" placeholder="https://www.youtube.com/watch?v=..." />
+      <div class="yt-time-row">
+        <input type="text" id="ytStart" class="yt-input yt-time" placeholder="Start 10:30" />
+        <input type="text" id="ytEnd" class="yt-input yt-time" placeholder="End 10:34" />
+        <button class="btn btn-gold" id="ytFetchBtn">Fetch Clip</button>
+      </div>
+      <div class="small-note" id="ytStatus">
+        Requires the free local SwingVision clip helper (server.js, included) running on your machine — it downloads and trims just this timestamp range using yt-dlp + ffmpeg, then feeds it into the same skeleton-extraction pipeline as an uploaded video. See the README for one-time setup. Please only fetch clips you have the right to use.
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>SWINGVISION — On-device pose analysis. Nothing leaves your browser.</footer>
+
+<video id="uploadVideo" style="display:none" playsinline muted></video>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ---------------- Landmark indices (MediaPipe Pose, 33 pts) ---------------- */
+const L = {
+  nose:0, lShoulder:11, rShoulder:12, lElbow:13, rElbow:14, lWrist:15, rWrist:16,
+  lHip:23, rHip:24, lKnee:25, rKnee:26, lAnkle:27, rAnkle:28, lHeel:29, rHeel:30,
+  lFoot:31, rFoot:32
+};
+const CONNECTIONS = [
+  [11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
+  [23,25],[25,27],[27,29],[27,31],[24,26],[26,28],[28,30],[28,32],[0,11],[0,12]
+];
+
+/* ---------------- Angle helpers ---------------- */
+function angleDeg(a,b,c){ // angle at b, between a-b-c
+  const v1={x:a.x-b.x,y:a.y-b.y}, v2={x:c.x-b.x,y:c.y-b.y};
+  const dot=v1.x*v2.x+v1.y*v2.y;
+  const m1=Math.hypot(v1.x,v1.y), m2=Math.hypot(v2.x,v2.y);
+  if(m1===0||m2===0) return 0;
+  let cos=dot/(m1*m2);
+  cos=Math.max(-1,Math.min(1,cos));
+  return Math.acos(cos)*180/Math.PI;
+}
+function lineAngleDeg(a,b){ // angle of segment a-b relative to horizontal
+  return Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI;
+}
+
+function extractMetrics(p){
+  const shoulderRot = Math.abs(lineAngleDeg(p[L.lShoulder],p[L.rShoulder]));
+  const hipRot = Math.abs(lineAngleDeg(p[L.lHip],p[L.rHip]));
+  const midSh={x:(p[L.lShoulder].x+p[L.rShoulder].x)/2,y:(p[L.lShoulder].y+p[L.rShoulder].y)/2};
+  const midHip={x:(p[L.lHip].x+p[L.rHip].x)/2,y:(p[L.lHip].y+p[L.rHip].y)/2};
+  const spineTilt = Math.abs(90-Math.abs(lineAngleDeg(midHip,midSh)));
+  const lElbow = angleDeg(p[L.lShoulder],p[L.lElbow],p[L.lWrist]);
+  const rElbow = angleDeg(p[L.rShoulder],p[L.rElbow],p[L.rWrist]);
+  const lKnee = angleDeg(p[L.lHip],p[L.lKnee],p[L.lAnkle]);
+  const rKnee = angleDeg(p[L.rHip],p[L.rKnee],p[L.rAnkle]);
+  const lAnkle = angleDeg(p[L.lKnee],p[L.lAnkle],p[L.lFoot]);
+  const rAnkle = angleDeg(p[L.rKnee],p[L.rAnkle],p[L.rFoot]);
+  return {shoulderRot,hipRot,spineTilt,lElbow,rElbow,lKnee,rKnee,lAnkle,rAnkle};
+}
+
+const METRIC_LABELS = {
+  shoulderRot:"Shoulder Turn", hipRot:"Hip Rotation", spineTilt:"Spine Angle",
+  lElbow:"Lead Elbow", rElbow:"Trail Elbow", lKnee:"Lead Knee", rKnee:"Trail Knee",
+  lAnkle:"Lead Ankle", rAnkle:"Trail Ankle"
+};
+
+const ADVICE_TEMPLATES = {
+  shoulderRot:{high:"Rotate your shoulders further — you're under-turning at this phase.", low:"You're over-rotating your shoulders — try a more compact turn."},
+  hipRot:{high:"Turn your hips more into this position for better sequencing.", low:"Quiet your hip rotation slightly — let the shoulders lead."},
+  spineTilt:{high:"Straighten your spine angle — you're leaning too far forward.", low:"Increase your forward spine tilt at address/impact for better posture."},
+  lElbow:{high:"Keep your lead arm straighter through this phase.", low:"Soften your lead elbow slightly — it's too rigid."},
+  rElbow:{high:"Allow a touch more bend in your trail elbow.", low:"Your trail elbow is over-bent — extend it more."},
+  lKnee:{high:"Flex your lead knee more for stability.", low:"Straighten your lead knee slightly at this point."},
+  rKnee:{high:"Bend your trail knee more to load properly.", low:"Reduce trail knee flex — you're sitting too low."},
+  lAnkle:{high:"Turn your lead ankle more toward the target.", low:"Keep your lead ankle more stable — less lateral roll."},
+  rAnkle:{high:"Roll your trail ankle further through impact.", low:"Stabilize your trail ankle — you're rolling it too much."}
+};
+
+/* ---------------- Standard gesture data (built-in idealised targets, degrees) ---------------- */
+// Values are illustrative biomechanical targets per phase, side-on view.
+const PHASES = ["address","top","impact","finish"];
+const DEFAULT_STANDARDS = {
+  swing:{
+    address:{shoulderRot:2,hipRot:2,spineTilt:32,lElbow:165,rElbow:160,lKnee:155,rKnee:155,lAnkle:100,rAnkle:100},
+    top:{shoulderRot:38,hipRot:22,spineTilt:34,lElbow:150,rElbow:80,lKnee:150,rKnee:140,lAnkle:105,rAnkle:95},
+    impact:{shoulderRot:8,hipRot:18,spineTilt:30,lElbow:170,rElbow:150,lKnee:150,rKnee:155,lAnkle:95,rAnkle:105},
+    finish:{shoulderRot:50,hipRot:45,spineTilt:20,lElbow:150,rElbow:150,lKnee:150,rKnee:120,lAnkle:110,rAnkle:80}
+  },
+  putting:{
+    address:{shoulderRot:1,hipRot:1,spineTilt:34,lElbow:160,rElbow:160,lKnee:160,rKnee:160,lAnkle:98,rAnkle:98},
+    top:{shoulderRot:10,hipRot:3,spineTilt:34,lElbow:158,rElbow:150,lKnee:160,rKnee:160,lAnkle:99,rAnkle:98},
+    impact:{shoulderRot:2,hipRot:1,spineTilt:34,lElbow:160,rElbow:158,lKnee:160,rKnee:160,lAnkle:98,rAnkle:98},
+    finish:{shoulderRot:10,hipRot:3,spineTilt:34,lElbow:158,rElbow:150,lKnee:160,rKnee:160,lAnkle:99,rAnkle:98}
+  },
+  chip:{
+    address:{shoulderRot:2,hipRot:2,spineTilt:30,lElbow:162,rElbow:158,lKnee:158,rKnee:158,lAnkle:99,rAnkle:99},
+    top:{shoulderRot:20,hipRot:10,spineTilt:31,lElbow:155,rElbow:110,lKnee:155,rKnee:150,lAnkle:101,rAnkle:97},
+    impact:{shoulderRot:5,hipRot:8,spineTilt:30,lElbow:165,rElbow:155,lKnee:155,rKnee:158,lAnkle:98,rAnkle:100},
+    finish:{shoulderRot:25,hipRot:20,spineTilt:26,lElbow:155,rElbow:150,lKnee:155,rKnee:140,lAnkle:103,rAnkle:92}
+  }
+};
+// deep-copy per shot type, mutated when user uploads a custom reference
+const standards = JSON.parse(JSON.stringify(DEFAULT_STANDARDS));
+const customFlag = {swing:false, putting:false, chip:false};
+// hand-authored side-on stick figure keypoints (normalized 0-1) for built-in ghost animation
+const GHOST_POSES = {
+  swing:{
+    address:{head:[.5,.18],lSh:[.47,.30],rSh:[.53,.30],lEl:[.44,.42],rEl:[.56,.42],lWr:[.50,.55],rWr:[.50,.55],lHip:[.48,.55],rHip:[.52,.55],lKn:[.47,.72],rKn:[.53,.72],lAn:[.47,.90],rAn:[.53,.90]},
+    top:{head:[.52,.17],lSh:[.44,.29],rSh:[.60,.32],lEl:[.36,.24],rEl:[.66,.30],lWr:[.30,.20],rWr:[.62,.20],lHip:[.49,.55],rHip:[.55,.55],lKn:[.46,.72],rKn:[.55,.72],lAn:[.47,.90],rAn:[.54,.90]},
+    impact:{head:[.49,.19],lSh:[.45,.31],rSh:[.58,.32],lEl:[.55,.44],rEl:[.62,.42],lWr:[.62,.55],rWr:[.60,.55],lHip:[.47,.55],rHip:[.53,.55],lKn:[.46,.72],rKn:[.53,.72],lAn:[.47,.90],rAn:[.53,.90]},
+    finish:{head:[.46,.20],lSh:[.42,.32],rSh:[.55,.28],lEl:[.34,.24],rEl:[.44,.20],lWr:[.30,.16],rWr:[.36,.14],lHip:[.44,.56],rHip:[.50,.54],lKn:[.42,.72],rKn:[.50,.70],lAn:[.40,.90],rAn:[.52,.90]}
+  }
+};
+GHOST_POSES.putting = GHOST_POSES.chip = GHOST_POSES.swing; // fallback shared visual, distinguished by amplitude scale
+const GHOST_SCALE = {swing:1, putting:0.35, chip:0.6};
+// custom uploaded ghost landmarks per shot type & phase (raw pose landmarks, screen-normalized), null until uploaded
+const customGhost = {swing:null, putting:null, chip:null};
+
+let currentShot = "swing";
+
+/* ---------------- UI wiring ---------------- */
+document.querySelectorAll(".shot-tab").forEach(tab=>{
+  tab.addEventListener("click",()=>{
+    document.querySelectorAll(".shot-tab").forEach(t=>t.classList.remove("active"));
+    tab.classList.add("active");
+    currentShot = tab.dataset.shot;
+    document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Built-in reference";
+    resetPhaseTrack();
+  });
+});
+
+/* ---------------- Ghost canvas animation ---------------- */
+const ghostCanvas = document.getElementById("ghostCanvas");
+const ghostCtx = ghostCanvas.getContext("2d");
+function fitGhostCanvas(){
+  const rect = ghostCanvas.parentElement.getBoundingClientRect();
+  ghostCanvas.width = rect.width; ghostCanvas.height = rect.height;
+}
+window.addEventListener("resize", fitGhostCanvas);
+fitGhostCanvas();
+
+let ghostPhaseIdx = 0, ghostT = 0;
+function drawStick(ctx,w,h,pts,color,scaleAmp){
+  const cx=0.5, cy=0.55;
+  const sc = (v,axis)=>{
+    const base = axis==='x'? cx : cy;
+    return base + (v-base)*scaleAmp;
+  };
+  const P = {};
+  for(const k in pts){ P[k] = {x: sc(pts[k][0],'x')*w, y: sc(pts[k][1],'y')*h}; }
+  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineCap='round';
+  const bones = [["lSh","rSh"],["lSh","lEl"],["lEl","lWr"],["rSh","rEl"],["rEl","rWr"],
+    ["lSh","lHip"],["rSh","rHip"],["lHip","rHip"],["lHip","lKn"],["lKn","lAn"],["rHip","rKn"],["rKn","rAn"]];
+  bones.forEach(([a,b])=>{ ctx.beginPath(); ctx.moveTo(P[a].x,P[a].y); ctx.lineTo(P[b].x,P[b].y); ctx.stroke(); });
+  ctx.fillStyle = color;
+  Object.values(P).forEach(pt=>{ ctx.beginPath(); ctx.arc(pt.x,pt.y,3.5,0,7); ctx.fill(); });
+  // head
+  const headPt = {x: sc(pts.head[0],'x')*w, y: sc(pts.head[1],'y')*h};
+  ctx.beginPath(); ctx.arc(headPt.x,headPt.y,10,0,7); ctx.stroke();
+}
+
+function lerpPose(a,b,t){
+  const out={};
+  for(const k in a){ out[k]=[a[k][0]+(b[k][0]-a[k][0])*t, a[k][1]+(b[k][1]-a[k][1])*t]; }
+  return out;
+}
+
+function ghostLoop(){
+  ghostT += 0.012;
+  if(ghostT>=1){ ghostT=0; ghostPhaseIdx=(ghostPhaseIdx+1)%PHASES.length; }
+  const w=ghostCanvas.width, h=ghostCanvas.height;
+  ghostCtx.clearRect(0,0,w,h);
+  // vertical guide
+  ghostCtx.strokeStyle="rgba(255,255,255,0.05)"; ghostCtx.lineWidth=1;
+  ghostCtx.beginPath(); ghostCtx.moveTo(w*0.5,0); ghostCtx.lineTo(w*0.5,h); ghostCtx.stroke();
+
+  const source = customGhost[currentShot];
+  let curr,next;
+  if(source){
+    curr = source[PHASES[ghostPhaseIdx]] || source[PHASES[0]];
+    next = source[PHASES[(ghostPhaseIdx+1)%PHASES.length]] || curr;
+    drawStick(ghostCtx,w,h,lerpNorm(curr,next,ghostT),"#e6c789",1);
+  } else {
+    const base = GHOST_POSES.swing;
+    curr = base[PHASES[ghostPhaseIdx]];
+    next = base[PHASES[(ghostPhaseIdx+1)%PHASES.length]];
+    drawStick(ghostCtx,w,h,lerpPose(curr,next,ghostT),"#e6c789",GHOST_SCALE[currentShot]);
+  }
+  document.getElementById("ghostPhaseLabel").textContent = PHASES[ghostPhaseIdx].toUpperCase();
+  requestAnimationFrame(ghostLoop);
+}
+function lerpNorm(a,b,t){
+  const out={};
+  for(const k in a){ out[k]=[a[k][0]+(b[k][0]-a[k][0])*t, a[k][1]+(b[k][1]-a[k][1])*t]; }
+  return out;
+}
+requestAnimationFrame(ghostLoop);
+
+/* ---------------- Club sensor: WebSocket pairing with phone ---------------- */
+const connectPhoneBtn = document.getElementById("connectPhoneBtn");
+const sensorSub = document.getElementById("sensorSub");
+const deviceList = document.getElementById("deviceList");
+const sensorReadout = document.getElementById("sensorReadout");
+const phAccMag = document.getElementById("phAccMag");
+const phRotMag = document.getElementById("phRotMag");
+const phHz = document.getElementById("phHz");
+
+let deskWs = null;
+let pairedPhoneName = null;
+let phoneMsgCount = 0, phoneLastHz = performance.now();
+window.latestClubMotion = null; // exposed so the recording/scoring pipeline can read it later
+
+function deskWsUrl() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  return proto + location.host;
+}
+
+connectPhoneBtn.addEventListener("click", () => {
+  if (deskWs && deskWs.readyState === WebSocket.OPEN) {
+    renderDeviceList([]); // just refresh; server pushes list on connect
+    return;
+  }
+  if (location.protocol === "file:" || !location.host) {
+    sensorSub.textContent = "Open this page via http://localhost:8787, not as a local file";
+    sensorSub.classList.remove("connected");
+    console.error("[swingvision] Club Sensor needs the page served by the local server. " +
+      "Run `npm start` in the SwingVision folder, then open http://localhost:8787/index.html " +
+      "(current location: " + location.href + ")");
+    return;
+  }
+  let ws;
+  try {
+    ws = new WebSocket(deskWsUrl());
+  } catch (err) {
+    sensorSub.textContent = "Couldn't open a connection — see browser console";
+    console.error("[swingvision] WebSocket constructor failed:", err, "url attempted:", deskWsUrl());
+    return;
+  }
+  deskWs = ws;
+  sensorSub.textContent = "Connecting…";
+  deskWs.addEventListener("open", () => {
+    deskWs.send(JSON.stringify({ type: "hello", role: "desktop", name: "Desktop" }));
+  });
+  deskWs.addEventListener("message", (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === "device-list") renderDeviceList(msg.devices);
+    if (msg.type === "paired") {
+      pairedPhoneName = msg.peerName;
+      sensorSub.textContent = "Connected — " + pairedPhoneName;
+      sensorSub.classList.add("connected");
+      sensorReadout.style.display = "grid";
+    }
+    if (msg.type === "unpaired" || msg.type === "pair-failed") {
+      pairedPhoneName = null;
+      sensorSub.textContent = msg.reason || "Not connected";
+      sensorSub.classList.remove("connected");
+      sensorReadout.style.display = "none";
+    }
+    if (msg.type === "motion") {
+      window.latestClubMotion = msg.data;
+      const d = msg.data;
+      const accMag = Math.sqrt((d.ax||0)**2 + (d.ay||0)**2 + (d.az||0)**2) / 9.81;
+      const rotMag = Math.sqrt((d.ra||0)**2 + (d.rb||0)**2 + (d.rg||0)**2);
+      phAccMag.textContent = accMag.toFixed(2);
+      phRotMag.textContent = rotMag.toFixed(0);
+      phoneMsgCount++;
+      const now = performance.now();
+      if (now - phoneLastHz > 1000) { phHz.textContent = phoneMsgCount; phoneMsgCount = 0; phoneLastHz = now; }
+    }
+  });
+  deskWs.addEventListener("close", (ev) => {
+    sensorSub.textContent = "Not connected";
+    sensorSub.classList.remove("connected");
+    deviceList.innerHTML = "";
+    sensorReadout.style.display = "none";
+    console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason);
+  });
+  deskWs.addEventListener("error", (err) => {
+    sensorSub.textContent = "Couldn't reach local server — is `npm start` running?";
+    console.error("[swingvision] Club Sensor WebSocket error:", err, "url attempted:", deskWsUrl());
+  });
+});
+
+function renderDeviceList(devices) {
+  deviceList.innerHTML = "";
+  if (!devices.length) {
+    const empty = document.createElement("div");
+    empty.className = "device-empty";
+    empty.textContent = "No phones found yet — open the Club Sensor page on your phone (same WiFi) to appear here.";
+    deviceList.appendChild(empty);
+    return;
+  }
+  devices.forEach((dev) => {
+    const row = document.createElement("div");
+    row.className = "device-row" + (dev.paired ? " paired" : "");
+    row.innerHTML = `<div class="dn"><span class="dot"></span>${dev.name}</div>`;
+    const btn = document.createElement("button");
+    btn.className = "btn btn-gold";
+    btn.textContent = dev.paired ? "Paired" : "Pair";
+    btn.disabled = dev.paired;
+    btn.addEventListener("click", () => {
+      deskWs.send(JSON.stringify({ type: "pair-request", phoneId: dev.id }));
+    });
+    row.appendChild(btn);
+    deviceList.appendChild(row);
+  });
+}
+
+/* ---------------- PWA: install + service worker ---------------- */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js").catch((e) => console.warn("SW registration failed:", e));
+  });
+}
+
+const installBtn = document.getElementById("installBtn");
+let deferredInstallPrompt = null;
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  // Chrome / Android / desktop Edge — native install prompt available
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.style.display = "inline-block";
+  installBtn.textContent = "＋ Install App";
+});
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+if (isIOS && !isStandalone) {
+  // Safari has no beforeinstallprompt API — show a button that explains the manual step
+  installBtn.style.display = "inline-block";
+  installBtn.textContent = "＋ Add to Home Screen";
+}
+
+installBtn.addEventListener("click", async () => {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    if (choice.outcome === "accepted") installBtn.style.display = "none";
+    deferredInstallPrompt = null;
+    return;
+  }
+  if (isIOS) {
+    alert('To install SwingVision on your iPhone: tap the Share icon in Safari\'s toolbar, then choose "Add to Home Screen". It will open full-screen like an app, with camera access working exactly as it does here.');
+  }
+});
+
+window.addEventListener("appinstalled", () => { installBtn.style.display = "none"; });
+
+/* ---------------- Pose model ---------------- */
+let poseLandmarker=null;
+const dot = document.getElementById("modelStatusDot");
+const txt = document.getElementById("modelStatusText");
+
+async function initModel(){
+  try{
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    poseLandmarker = await PoseLandmarker.createFromOptions(vision,{
+      baseOptions:{
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        delegate:"GPU"
+      },
+      runningMode:"VIDEO",
+      numPoses:1
+    });
+    dot.classList.add("on"); txt.textContent="Pose model ready";
+    document.getElementById("startCamBtn").disabled=false;
+  }catch(e){
+    console.error(e);
+    dot.classList.add("err"); txt.textContent="Model failed to load — check connection";
+  }
+}
+initModel();
+
+/* ---------------- Camera + live tracking ---------------- */
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const octx = overlay.getContext("2d");
+const camHint = document.getElementById("camHint");
+let camRunning=false, lastVideoTime=-1;
+let liveBuffer=[]; // {t, landmarks}
+let recording=false;
+
+document.getElementById("startCamBtn").addEventListener("click", startCamera);
+async function startCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{width:1280,height:960,facingMode:"user"}});
+    video.srcObject = stream;
+    await video.play();
+    camHint.style.display="none";
+    fitOverlay();
+    camRunning=true;
+    document.getElementById("recordBtn").disabled=false;
+    requestAnimationFrame(trackLoop);
+  }catch(e){
+    console.error(e);
+    alert("Camera access is required for pose tracking. Please allow camera permission and try again.");
+  }
+}
+function fitOverlay(){
+  const rect = video.getBoundingClientRect();
+  overlay.width = rect.width; overlay.height = rect.height;
+}
+window.addEventListener("resize", fitOverlay);
+
+function drawLiveSkeleton(landmarks){
+  const w=overlay.width, h=overlay.height;
+  octx.clearRect(0,0,w,h);
+  octx.lineWidth=3; octx.strokeStyle="rgba(230,199,137,0.9)";
+  CONNECTIONS.forEach(([a,b])=>{
+    const pa=landmarks[a], pb=landmarks[b];
+    octx.beginPath(); octx.moveTo(pa.x*w,pa.y*h); octx.lineTo(pb.x*w,pb.y*h); octx.stroke();
+  });
+  octx.fillStyle="#2e9c78";
+  landmarks.forEach(p=>{ octx.beginPath(); octx.arc(p.x*w,p.y*h,4,0,7); octx.fill(); });
+}
+
+function trackLoop(){
+  if(!camRunning) return;
+  if(poseLandmarker && video.currentTime!==lastVideoTime){
+    lastVideoTime = video.currentTime;
+    const result = poseLandmarker.detectForVideo(video, performance.now());
+    if(result.landmarks && result.landmarks.length){
+      const lm = result.landmarks[0];
+      drawLiveSkeleton(lm);
+      if(recording){ liveBuffer.push({t:performance.now(), landmarks:lm}); }
+    } else {
+      octx.clearRect(0,0,overlay.width,overlay.height);
+    }
+  }
+  requestAnimationFrame(trackLoop);
+}
+
+/* ---------------- Recording & scoring ---------------- */
+const recordBtn = document.getElementById("recordBtn");
+const stopBtn = document.getElementById("stopBtn");
+const recIndicator = document.getElementById("recIndicator");
+
+recordBtn.addEventListener("click",()=>{
+  liveBuffer=[]; recording=true;
+  recordBtn.style.display="none"; stopBtn.style.display="inline-block";
+  recIndicator.classList.add("on");
+  document.getElementById("results").style.display="none";
+  resetPhaseTrack();
+});
+stopBtn.addEventListener("click",()=>{
+  recording=false;
+  recordBtn.style.display="inline-block"; stopBtn.style.display="none";
+  recIndicator.classList.remove("on");
+  if(liveBuffer.length<8){
+    alert("Recording too short — capture your full swing motion, then stop.");
+    return;
+  }
+  analyzeAndScore(liveBuffer, currentShot);
+});
+document.getElementById("resetBtn").addEventListener("click",()=>{
+  liveBuffer=[]; document.getElementById("results").style.display="none"; resetPhaseTrack();
+});
+
+function resetPhaseTrack(){
+  document.querySelectorAll(".phase-step").forEach(s=>s.classList.remove("active","done"));
+}
+
+// segment a landmark buffer into 4 phases using wrist trajectory heuristics
+function segmentPhases(buffer){
+  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+  const n = buffer.length;
+  const addressIdx = 0;
+  // top = highest wrist point (min y) within first 70% of buffer
+  let topIdx=0, minY=Infinity;
+  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
+  // impact = after top, wrist y returns near address height, pick fastest downward point
+  let impactIdx=topIdx, bestDelta=-Infinity;
+  for(let i=topIdx+1;i<n;i++){
+    const delta = wristY[i]-wristY[i-1];
+    if(delta>bestDelta){ bestDelta=delta; impactIdx=i; }
+  }
+  const finishIdx = n-1;
+  return {
+    address: buffer[addressIdx].landmarks,
+    top: buffer[Math.max(topIdx,1)].landmarks,
+    impact: buffer[Math.min(Math.max(impactIdx,topIdx+1),n-1)].landmarks,
+    finish: buffer[finishIdx].landmarks
+  };
+}
+
+function analyzeAndScore(buffer, shot){
+  const phasesLM = segmentPhases(buffer);
+  const target = standards[shot];
+  let totalScore=0, count=0;
+  const deviations=[]; // {metric, phase, diff, direction}
+  const barData=[];
+
+  PHASES.forEach((phase,i)=>{
+    setTimeout(()=>{ // stagger visual reveal of phase pips
+      document.querySelectorAll('.phase-step')[i].classList.add('done');
+    }, i*180);
+
+    const userMetrics = extractMetrics(phasesLM[phase]);
+    const tgt = target[phase];
+    for(const m in tgt){
+      const diff = userMetrics[m]-tgt[m];
+      const tolerance = 12; // degrees considered "on target"
+      const score = Math.max(0, 100 - (Math.abs(diff)/tolerance)*40);
+      totalScore += Math.min(100,score); count++;
+      barData.push({label:`${METRIC_LABELS[m]} (${phase})`, score:Math.min(100,Math.round(score))});
+      if(Math.abs(diff) > tolerance*0.6){
+        deviations.push({metric:m, phase, diff, absDiff:Math.abs(diff)});
+      }
+    }
+  });
+
+  const overall = Math.round(totalScore/count);
+  deviations.sort((a,b)=>b.absDiff-a.absDiff);
+
+  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData), PHASES.length*180+150);
+}
+
+function renderResults(overall, topDeviations, barData){
+  const results = document.getElementById("results");
+  results.style.display="block";
+  const circle = document.getElementById("scoreCircle");
+  const circumference = 2*Math.PI*46;
+  const offset = circumference - (overall/100)*circumference;
+  requestAnimationFrame(()=>{ circle.style.strokeDashoffset = offset; });
+  document.getElementById("scoreNum").textContent = overall;
+
+  const headline = document.getElementById("scoreHeadline");
+  const sub = document.getElementById("scoreSub");
+  if(overall>=85){ headline.textContent="Excellent Form"; sub.textContent="Your pose closely matches the standard gesture."; }
+  else if(overall>=65){ headline.textContent="Good, Room to Refine"; sub.textContent="Solid swing — a few positions need adjustment."; }
+  else { headline.textContent="Needs Work"; sub.textContent="Several key positions are off the standard gesture."; }
+
+  const list = document.getElementById("adviceList");
+  list.innerHTML="";
+  if(topDeviations.length===0){
+    const li=document.createElement("li");
+    li.className="advice-item good";
+    li.innerHTML=`<span class="tag">✓</span><span>Every phase matched within tolerance — great consistency across your swing.</span>`;
+    list.appendChild(li);
+  } else {
+    topDeviations.forEach((d,i)=>{
+      const tmpl = ADVICE_TEMPLATES[d.metric];
+      const text = d.diff>0 ? tmpl.high : tmpl.low;
+      const li=document.createElement("li");
+      li.className="advice-item";
+      li.style.animationDelay = (i*0.08)+"s";
+      li.innerHTML = `<span class="tag">${i+1}</span><span><b>${METRIC_LABELS[d.metric]} — ${d.phase}:</b> ${text}</span>`;
+      list.appendChild(li);
+    });
+  }
+
+  const bars = document.getElementById("metricBars");
+  bars.innerHTML="";
+  barData.forEach(b=>{
+    const row=document.createElement("div");
+    row.className="metric-bar-row";
+    row.innerHTML = `<div>${b.label}</div><div class="metric-bar-track"><div class="metric-bar-fill" style="width:${b.score}%"></div></div><div>${b.score}%</div>`;
+    bars.appendChild(row);
+  });
+}
+
+/* ---------------- Upload own gesture ---------------- */
+const uploadInput = document.getElementById("uploadInput");
+const uploadVideo = document.getElementById("uploadVideo");
+const uploadStatus = document.getElementById("uploadStatus");
+
+uploadInput.addEventListener("change", async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  await processGestureVideo(URL.createObjectURL(file), uploadStatus, "upload");
+});
+
+// shared pipeline: takes any playable video URL (object URL from a file, or
+// a blob URL served by the local YouTube-clip helper) and extracts a
+// standard gesture from it, same as the manual upload path.
+async function processGestureVideo(srcUrl, statusEl, sourceLabel){
+  if(!poseLandmarker){ alert("Pose model still loading, please wait a moment and retry."); return; }
+  statusEl.textContent = "Processing clip — extracting skeleton…";
+  uploadVideo.src = srcUrl;
+  await new Promise((res,rej)=>{
+    uploadVideo.onloadedmetadata = res;
+    uploadVideo.onerror = ()=>rej(new Error("Could not load video"));
+  }).catch(err=>{ statusEl.textContent = "Couldn't load that video clip. " + err.message; throw err; });
+  await uploadVideo.play();
+
+  const buffer=[];
+  const dur = uploadVideo.duration;
+  await new Promise((resolve)=>{
+    function step(){
+      if(uploadVideo.currentTime>=dur-0.05 || uploadVideo.paused){ resolve(); return; }
+      const res = poseLandmarker.detectForVideo(uploadVideo, performance.now());
+      if(res.landmarks && res.landmarks.length){
+        buffer.push({t:uploadVideo.currentTime, landmarks:res.landmarks[0]});
+      }
+      requestAnimationFrame(step);
+    }
+    step();
+  });
+  uploadVideo.pause();
+
+  if(buffer.length<8){
+    statusEl.textContent = "Couldn't detect a clear full-body pose in that clip. Try a side-on clip with the whole body visible.";
+    return;
+  }
+
+  const phasesLM = segmentPhases(buffer);
+  const newTarget={};
+  PHASES.forEach(p=>{ newTarget[p] = extractMetrics(phasesLM[p]); });
+  standards[currentShot] = newTarget;
+  customFlag[currentShot] = true;
+
+  const toGhostPts = (lm)=>({
+    head:[lm[L.nose].x,lm[L.nose].y],
+    lSh:[lm[L.lShoulder].x,lm[L.lShoulder].y], rSh:[lm[L.rShoulder].x,lm[L.rShoulder].y],
+    lEl:[lm[L.lElbow].x,lm[L.lElbow].y], rEl:[lm[L.rElbow].x,lm[L.rElbow].y],
+    lWr:[lm[L.lWrist].x,lm[L.lWrist].y], rWr:[lm[L.rWrist].x,lm[L.rWrist].y],
+    lHip:[lm[L.lHip].x,lm[L.lHip].y], rHip:[lm[L.rHip].x,lm[L.rHip].y],
+    lKn:[lm[L.lKnee].x,lm[L.lKnee].y], rKn:[lm[L.rKnee].x,lm[L.rKnee].y],
+    lAn:[lm[L.lAnkle].x,lm[L.lAnkle].y], rAn:[lm[L.rAnkle].x,lm[L.rAnkle].y]
+  });
+  const ghostSet={};
+  PHASES.forEach(p=>{ ghostSet[p]=toGhostPts(phasesLM[p]); });
+  customGhost[currentShot] = ghostSet;
+
+  document.getElementById("ghostSource").textContent = sourceLabel==="youtube" ? "Custom YouTube reference" : "Custom uploaded reference";
+  statusEl.textContent = `Custom ${currentShot} reference saved from ${sourceLabel==="youtube"?"YouTube clip":"upload"} — this now replaces the built-in standard for ${currentShot}.`;
+}
+
+/* ---------------- YouTube clip fetch (via local helper server) ---------------- */
+const CLIP_SERVER = "http://localhost:8787";
+const ytUrl = document.getElementById("ytUrl");
+const ytStart = document.getElementById("ytStart");
+const ytEnd = document.getElementById("ytEnd");
+const ytStatus = document.getElementById("ytStatus");
+const ytFetchBtn = document.getElementById("ytFetchBtn");
+
+ytFetchBtn.addEventListener("click", async ()=>{
+  const url = ytUrl.value.trim();
+  const start = ytStart.value.trim();
+  const end = ytEnd.value.trim();
+  if(!url || !start || !end){
+    ytStatus.textContent = "Enter a YouTube URL and both a start and end timestamp (e.g. 10:30 and 10:34).";
+    return;
+  }
+  ytFetchBtn.disabled = true;
+  ytStatus.textContent = "Contacting local clip helper server…";
+  try{
+    const health = await fetch(`${CLIP_SERVER}/health`).then(r=>r.json()).catch(()=>null);
+    if(!health || !health.ok){
+      ytStatus.textContent = "Local clip helper isn't running (or is missing yt-dlp/ffmpeg). Start it with `npm start` in the SwingVision folder — see README for setup.";
+      ytFetchBtn.disabled = false;
+      return;
+    }
+    ytStatus.textContent = "Downloading & trimming clip (this can take up to ~30s)…";
+    const clipUrl = `${CLIP_SERVER}/clip?url=${encodeURIComponent(url)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+    const resp = await fetch(clipUrl);
+    if(!resp.ok){
+      const errJson = await resp.json().catch(()=>({error:"Unknown error"}));
+      ytStatus.textContent = "Clip fetch failed: " + errJson.error;
+      ytFetchBtn.disabled = false;
+      return;
+    }
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    await processGestureVideo(blobUrl, ytStatus, "youtube");
+  }catch(err){
+    console.error(err);
+    ytStatus.textContent = "Couldn't reach the local clip helper server at localhost:8787. Make sure it's running (`npm start`).";
+  }finally{
+    ytFetchBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

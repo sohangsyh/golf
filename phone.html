@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<title>SwingVision — Club Sensor</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#07080a" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+  :root{
+    --gold:#c9a35c; --gold-bright:#e6c789; --emerald:#1f6f54; --emerald-bright:#2e9c78;
+    --bg-0:#07080a; --panel:rgba(255,255,255,0.04); --panel-border:rgba(255,255,255,0.09);
+    --text-hi:#f3f1ec; --text-mid:#a8a49c; --text-lo:#6b6860; --good:#4bb583; --danger:#c9634f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    background:radial-gradient(900px 500px at 50% -10%, rgba(31,111,84,0.20), transparent 60%), var(--bg-0);
+    color:var(--text-hi); font-family:'Inter',sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; padding:28px 20px 40px; padding-top:max(28px, env(safe-area-inset-top));
+  }
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .brand-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--gold-bright),var(--emerald));
+    display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-weight:700;color:#07080a;font-size:16px;}
+  .brand-text{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;}
+  .brand-text span{color:var(--gold-bright);}
+  .subtitle{font-size:12px;color:var(--text-lo);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:34px;margin-top:2px;}
+
+  .card{
+    width:100%;max-width:420px;background:var(--panel);border:1px solid var(--panel-border);
+    border-radius:20px;padding:26px;backdrop-filter:blur(14px);text-align:center;
+  }
+  .status-dot{width:60px;height:60px;border-radius:50%;margin:0 auto 18px;
+    background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.15), rgba(255,255,255,0));
+    border:2px solid var(--panel-border);display:flex;align-items:center;justify-content:center;font-size:26px;transition:.3s;}
+  .status-dot.connecting{border-color:var(--gold); animation:pulse 1.2s infinite;}
+  .status-dot.paired{border-color:var(--emerald-bright); box-shadow:0 0 22px rgba(46,156,120,.35);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+
+  h1{font-family:'Playfair Display',serif;font-size:19px;margin-bottom:8px;font-weight:600;}
+  p.desc{font-size:13px;color:var(--text-mid);line-height:1.55;margin-bottom:22px;}
+
+  input[type=text]{
+    width:100%;padding:13px 15px;border-radius:11px;background:rgba(255,255,255,.03);
+    border:1px solid var(--panel-border);color:var(--text-hi);font-size:14px;margin-bottom:14px;outline:none;
+  }
+  input[type=text]:focus{border-color:var(--gold);}
+
+  .btn{appearance:none;border:none;cursor:pointer;font-family:'Inter';font-weight:600;font-size:14px;
+    padding:14px 22px;border-radius:12px;width:100%;transition:.15s;}
+  .btn:active{transform:scale(.97);}
+  .btn-gold{background:linear-gradient(135deg,var(--gold-bright),var(--gold));color:#1a1305;}
+  .btn-emerald{background:linear-gradient(135deg,var(--emerald-bright),var(--emerald));color:#f3f1ec;}
+  .btn-outline{background:transparent;border:1px solid var(--panel-border);color:var(--text-hi);}
+  .btn:disabled{opacity:.35;}
+
+  .readout{margin-top:20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  .readout div{background:rgba(255,255,255,.03);border:1px solid var(--panel-border);border-radius:10px;padding:10px 6px;}
+  .readout b{display:block;font-family:'Playfair Display',serif;font-size:15px;}
+  .readout span{font-size:9.5px;color:var(--text-lo);text-transform:uppercase;letter-spacing:1px;}
+
+  .footnote{font-size:11px;color:var(--text-lo);margin-top:22px;line-height:1.5;max-width:380px;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+  <div class="brand"><div class="brand-mark">S</div><div class="brand-text">SWING<span>VISION</span></div></div>
+  <div class="subtitle">Club Sensor Mode</div>
+
+  <div class="card">
+    <div class="status-dot" id="statusDot">📡</div>
+    <h1 id="statusTitle">Not connected</h1>
+    <p class="desc" id="statusDesc">Make sure this phone is on the same WiFi as your computer, then connect below.</p>
+
+    <div id="stepConnect">
+      <input type="text" id="deviceName" placeholder="Device name (e.g. Sohang's iPhone)" />
+      <button class="btn btn-gold" id="connectBtn">Connect</button>
+    </div>
+
+    <div id="stepPaired" class="hidden">
+      <button class="btn btn-emerald" id="enableMotionBtn">Enable Motion Sensors</button>
+      <button class="btn btn-outline" id="disconnectBtn" style="margin-top:10px;">Disconnect</button>
+      <div class="readout" id="readout" style="display:none;">
+        <div><b id="accMag">0.0</b><span>Accel (g)</span></div>
+        <div><b id="rotMag">0.0</b><span>Rotation °/s</span></div>
+        <div><b id="hz">0</b><span>Samples/s</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Motion sensor access requires this page to be opened over HTTPS (or from your paired computer's local server directly). If "Enable Motion Sensors" doesn't prompt for permission, see the SwingVision README for the HTTPS setup step.
+  </p>
+
+<script>
+const statusDot = document.getElementById("statusDot");
+const statusTitle = document.getElementById("statusTitle");
+const statusDesc = document.getElementById("statusDesc");
+const stepConnect = document.getElementById("stepConnect");
+const stepPaired = document.getElementById("stepPaired");
+const connectBtn = document.getElementById("connectBtn");
+const disconnectBtn = document.getElementById("disconnectBtn");
+const enableMotionBtn = document.getElementById("enableMotionBtn");
+const deviceNameInput = document.getElementById("deviceName");
+const readout = document.getElementById("readout");
+const accMagEl = document.getElementById("accMag");
+const rotMagEl = document.getElementById("rotMag");
+const hzEl = document.getElementById("hz");
+
+deviceNameInput.value = (navigator.userAgentData?.platform || navigator.platform || "iPhone") + " " + Math.floor(Math.random()*90+10);
+
+let ws = null;
+let motionEnabled = false;
+let sampleCount = 0;
+let lastHzTime = performance.now();
+
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  return proto + location.host;
+}
+
+connectBtn.addEventListener("click", () => {
+  const name = deviceNameInput.value.trim() || "iPhone";
+  ws = new WebSocket(wsUrl());
+  statusDot.className = "status-dot connecting";
+  statusTitle.textContent = "Connecting…";
+  statusDesc.textContent = "Reaching your SwingVision server…";
+  connectBtn.disabled = true;
+
+  ws.addEventListener("open", () => {
+    ws.send(JSON.stringify({ type: "hello", role: "phone", name }));
+  });
+
+  ws.addEventListener("message", (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === "welcome") {
+      statusTitle.textContent = "Waiting for pairing";
+      statusDesc.textContent = "Open SwingVision on your computer, click Connect, and select this device (" + name + ").";
+    }
+    if (msg.type === "paired") {
+      statusDot.className = "status-dot paired";
+      statusDot.textContent = "🔗";
+      statusTitle.textContent = "Paired with " + msg.peerName;
+      statusDesc.textContent = "Tap below to enable motion sensors and start streaming swing data.";
+      stepConnect.classList.add("hidden");
+      stepPaired.classList.remove("hidden");
+    }
+    if (msg.type === "unpaired") {
+      statusDot.className = "status-dot connecting";
+      statusDot.textContent = "📡";
+      statusTitle.textContent = "Waiting for pairing";
+      statusDesc.textContent = "Disconnected from computer. Reselect this device from SwingVision to pair again.";
+      readout.style.display = "none";
+    }
+  });
+
+  ws.addEventListener("close", () => {
+    statusDot.className = "status-dot";
+    statusDot.textContent = "📡";
+    statusTitle.textContent = "Not connected";
+    statusDesc.textContent = "Connection closed. Tap Connect to try again.";
+    stepConnect.classList.remove("hidden");
+    stepPaired.classList.add("hidden");
+    connectBtn.disabled = false;
+  });
+
+  ws.addEventListener("error", () => {
+    statusDesc.textContent = "Couldn't reach the server. Check you're on the same WiFi and the SwingVision server is running.";
+    connectBtn.disabled = false;
+  });
+});
+
+disconnectBtn.addEventListener("click", () => {
+  if (ws) { ws.send(JSON.stringify({ type: "unpair" })); ws.close(); }
+});
+
+enableMotionBtn.addEventListener("click", async () => {
+  try {
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      const result = await DeviceMotionEvent.requestPermission();
+      if (result !== "granted") {
+        statusDesc.textContent = "Motion permission denied. Enable it in Settings > Safari > Motion & Orientation Access, then reload.";
+        return;
+      }
+    }
+    startMotionStream();
+    enableMotionBtn.disabled = true;
+    enableMotionBtn.textContent = "Streaming…";
+    readout.style.display = "grid";
+  } catch (e) {
+    statusDesc.textContent = "Motion sensors aren't available on this browser/device.";
+  }
+});
+
+function startMotionStream() {
+  motionEnabled = true;
+  window.addEventListener("devicemotion", (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const acc = e.accelerationIncludingGravity || e.acceleration || { x: 0, y: 0, z: 0 };
+    const rot = e.rotationRate || { alpha: 0, beta: 0, gamma: 0 };
+    const payload = {
+      ax: round(acc.x), ay: round(acc.y), az: round(acc.z),
+      ra: round(rot.alpha), rb: round(rot.beta), rg: round(rot.gamma),
+      interval: e.interval
+    };
+    ws.send(JSON.stringify({ type: "motion", data: payload, t: Date.now() }));
+
+    const accMag = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2) / 9.81;
+    const rotMag = Math.sqrt((rot.alpha||0)**2 + (rot.beta||0)**2 + (rot.gamma||0)**2);
+    accMagEl.textContent = accMag.toFixed(2);
+    rotMagEl.textContent = rotMag.toFixed(0);
+    sampleCount++;
+    const now = performance.now();
+    if (now - lastHzTime > 1000) {
+      hzEl.textContent = sampleCount;
+      sampleCount = 0;
+      lastHzTime = now;
+    }
+  });
+}
+
+function round(v) { return Math.round((v || 0) * 100) / 100; }
+</script>
+</body>
+</html>

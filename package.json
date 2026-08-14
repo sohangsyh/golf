@@ -1,0 +1,15 @@
+{
+  "name": "swingvision-clip-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local helper server for SwingVision — fetches a trimmed clip from a YouTube URL using yt-dlp + ffmpeg so it can be analyzed as a standard gesture reference.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  }
+}
