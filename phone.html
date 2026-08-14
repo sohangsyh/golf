@@ -190,18 +190,27 @@ connectBtn.addEventListener("click", () => {
     }
   });
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (ev) => {
     statusDot.className = "status-dot";
     statusDot.textContent = "📡";
     statusTitle.textContent = "Not connected";
-    statusDesc.textContent = "Connection closed. Tap Connect to try again.";
+    if (ev.code === 1006 || ev.code === 1015) {
+      // abnormal closure — almost always means it never actually reached a server
+      statusDesc.textContent = "Couldn't reach a SwingVision server at " + location.host +
+        ". Check: is `npm start` running on your computer, are you on the same WiFi, " +
+        "and did you open the localhost/ngrok address rather than the GitHub Pages link?";
+    } else {
+      statusDesc.textContent = "Disconnected (code " + ev.code + "). Tap Connect to try again.";
+    }
     showStep(stepConnect);
     connectBtn.disabled = false;
+    console.warn("[swingvision] phone WebSocket closed", ev.code, ev.reason, "url:", wsUrl());
   });
 
-  ws.addEventListener("error", () => {
-    statusDesc.textContent = "Couldn't reach the server. Check you're on the same WiFi and the SwingVision server is running.";
-    connectBtn.disabled = false;
+  ws.addEventListener("error", (err) => {
+    console.error("[swingvision] phone WebSocket error:", err, "url:", wsUrl());
+    // the 'close' event fires right after this with more useful detail (see above) —
+    // intentionally not overwriting statusDesc here so that message isn't lost.
   });
 });
 

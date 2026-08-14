@@ -639,18 +639,22 @@ connectPhoneBtn.addEventListener("click", () => {
     }
   });
   deskWs.addEventListener("close", (ev) => {
-    sensorSub.textContent = "Not connected";
+    if (ev.code === 1006 || ev.code === 1015) {
+      sensorSub.textContent = "Couldn't reach a server — is `npm start` running?";
+    } else {
+      sensorSub.textContent = "Not connected (code " + ev.code + ")";
+    }
     sensorSub.classList.remove("connected");
     codeEntry.classList.add("hidden");
     sensorReadout.style.display = "none";
     connectPhoneBtn.style.display = "inline-block";
     connectPhoneBtn.disabled = false;
     deskWs = null;
-    console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason);
+    console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason, "url:", deskWsUrl());
   });
   deskWs.addEventListener("error", (err) => {
-    sensorSub.textContent = "Couldn't reach local server — is `npm start` running?";
-    connectPhoneBtn.disabled = false;
+    // 'close' fires right after with more specific detail — see above; avoid
+    // overwriting it with a generic message here.
     console.error("[swingvision] Club Sensor WebSocket error:", err, "url attempted:", deskWsUrl());
   });
 });
