@@ -219,17 +219,17 @@
   .sensor-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;display:flex;flex-direction:column;gap:2px;}
   .sensor-title small{font-family:'Inter';font-size:10.5px;color:var(--text-lo);letter-spacing:1px;text-transform:uppercase;font-weight:500;}
   .sensor-title small.connected{color:var(--emerald-bright);}
-  .device-list{display:flex;flex-direction:column;gap:8px;}
-  .device-row{
-    display:flex;align-items:center;justify-content:space-between;gap:10px;
-    padding:10px 13px;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid var(--panel-border);
-    font-size:12.5px;
+  .code-entry{margin-top:4px;}
+  .code-hint{font-size:12px;color:var(--text-mid);line-height:1.5;margin-bottom:10px;}
+  .code-entry-row{display:flex;gap:10px;}
+  .code-entry-row input{
+    flex:1;text-align:center;font-family:'Playfair Display',serif;font-size:22px;letter-spacing:8px;
+    padding:10px 8px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--panel-border);
+    color:var(--gold-bright);outline:none;
   }
-  .device-row .dn{display:flex;align-items:center;gap:8px;}
-  .device-row .dot{width:7px;height:7px;border-radius:50%;background:var(--gold);}
-  .device-row.paired .dot{background:var(--emerald-bright);box-shadow:0 0 6px var(--emerald-bright);}
-  .device-row button{padding:6px 12px;font-size:11.5px;border-radius:8px;}
-  .device-empty{font-size:12px;color:var(--text-lo);padding:10px 2px;}
+  .code-entry-row input:focus{border-color:var(--gold);}
+  .code-entry-row button{flex-shrink:0;}
+  .code-error{font-size:11.5px;color:var(--danger);margin-top:8px;min-height:14px;}
   .sensor-readout{margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
   .sensor-readout div{background:rgba(255,255,255,.03);border:1px solid var(--panel-border);border-radius:9px;padding:8px 4px;text-align:center;}
   .sensor-readout b{display:block;font-family:'Playfair Display',serif;font-size:14px;}
@@ -287,7 +287,16 @@
         <div class="sensor-title">Club Sensor <small id="sensorSub">Not connected</small></div>
         <button class="btn btn-outline" id="connectPhoneBtn">Connect</button>
       </div>
-      <div class="device-list" id="deviceList"></div>
+
+      <div class="code-entry hidden" id="codeEntry">
+        <p class="code-hint">Open the Club Sensor page on your phone, then enter the 4-digit code it shows:</p>
+        <div class="code-entry-row">
+          <input type="text" id="codeInput" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" />
+          <button class="btn btn-gold" id="submitCodeBtn">Pair</button>
+        </div>
+        <div class="code-error" id="codeError"></div>
+      </div>
+
       <div class="sensor-readout" id="sensorReadout" style="display:none;">
         <div><b id="phAccMag">0.0</b><span>Accel (g)</span></div>
         <div><b id="phRotMag">0.0</b><span>Rotation °/s</span></div>
@@ -546,17 +555,19 @@ function lerpNorm(a,b,t){
 }
 requestAnimationFrame(ghostLoop);
 
-/* ---------------- Club sensor: WebSocket pairing with phone ---------------- */
+/* ---------------- Club sensor: single-button connect + 4-digit code pairing ---------------- */
 const connectPhoneBtn = document.getElementById("connectPhoneBtn");
 const sensorSub = document.getElementById("sensorSub");
-const deviceList = document.getElementById("deviceList");
+const codeEntry = document.getElementById("codeEntry");
+const codeInput = document.getElementById("codeInput");
+const submitCodeBtn = document.getElementById("submitCodeBtn");
+const codeError = document.getElementById("codeError");
 const sensorReadout = document.getElementById("sensorReadout");
 const phAccMag = document.getElementById("phAccMag");
 const phRotMag = document.getElementById("phRotMag");
 const phHz = document.getElementById("phHz");
 
 let deskWs = null;
-let pairedPhoneName = null;
 let phoneMsgCount = 0, phoneLastHz = performance.now();
 window.latestClubMotion = null; // exposed so the recording/scoring pipeline can read it later
 
@@ -566,10 +577,7 @@ function deskWsUrl() {
 }
 
 connectPhoneBtn.addEventListener("click", () => {
-  if (deskWs && deskWs.readyState === WebSocket.OPEN) {
-    renderDeviceList([]); // just refresh; server pushes list on connect
-    return;
-  }
+  if (deskWs && deskWs.readyState === WebSocket.OPEN) return; // already connecting/connected
   if (location.protocol === "file:" || !location.host) {
     sensorSub.textContent = "Open this page via http://localhost:8787, not as a local file";
     sensorSub.classList.remove("connected");
@@ -588,23 +596,35 @@ connectPhoneBtn.addEventListener("click", () => {
   }
   deskWs = ws;
   sensorSub.textContent = "Connecting…";
+  connectPhoneBtn.disabled = true;
+
   deskWs.addEventListener("open", () => {
     deskWs.send(JSON.stringify({ type: "hello", role: "desktop", name: "Desktop" }));
   });
   deskWs.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
-    if (msg.type === "device-list") renderDeviceList(msg.devices);
-    if (msg.type === "paired") {
-      pairedPhoneName = msg.peerName;
-      sensorSub.textContent = "Connected — " + pairedPhoneName;
-      sensorSub.classList.add("connected");
-      sensorReadout.style.display = "grid";
+    if (msg.type === "welcome") {
+      sensorSub.textContent = "Ready — waiting for code";
+      connectPhoneBtn.style.display = "none";
+      codeEntry.classList.remove("hidden");
+      codeInput.focus();
     }
-    if (msg.type === "unpaired" || msg.type === "pair-failed") {
-      pairedPhoneName = null;
-      sensorSub.textContent = msg.reason || "Not connected";
+    if (msg.type === "paired") {
+      sensorSub.textContent = "Connected — " + msg.peerName;
+      sensorSub.classList.add("connected");
+      codeEntry.classList.add("hidden");
+      sensorReadout.style.display = "grid";
+      codeError.textContent = "";
+    }
+    if (msg.type === "pair-failed") {
+      codeError.textContent = msg.reason || "Pairing failed — try again.";
+      submitCodeBtn.disabled = false;
+    }
+    if (msg.type === "unpaired") {
+      sensorSub.textContent = "Ready — waiting for code";
       sensorSub.classList.remove("connected");
       sensorReadout.style.display = "none";
+      codeEntry.classList.remove("hidden");
     }
     if (msg.type === "motion") {
       window.latestClubMotion = msg.data;
@@ -621,40 +641,34 @@ connectPhoneBtn.addEventListener("click", () => {
   deskWs.addEventListener("close", (ev) => {
     sensorSub.textContent = "Not connected";
     sensorSub.classList.remove("connected");
-    deviceList.innerHTML = "";
+    codeEntry.classList.add("hidden");
     sensorReadout.style.display = "none";
+    connectPhoneBtn.style.display = "inline-block";
+    connectPhoneBtn.disabled = false;
+    deskWs = null;
     console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason);
   });
   deskWs.addEventListener("error", (err) => {
     sensorSub.textContent = "Couldn't reach local server — is `npm start` running?";
+    connectPhoneBtn.disabled = false;
     console.error("[swingvision] Club Sensor WebSocket error:", err, "url attempted:", deskWsUrl());
   });
 });
 
-function renderDeviceList(devices) {
-  deviceList.innerHTML = "";
-  if (!devices.length) {
-    const empty = document.createElement("div");
-    empty.className = "device-empty";
-    empty.textContent = "No phones found yet — open the Club Sensor page on your phone (same WiFi) to appear here.";
-    deviceList.appendChild(empty);
+function submitCode() {
+  const code = codeInput.value.trim();
+  if (!/^\d{4}$/.test(code)) {
+    codeError.textContent = "Enter the 4-digit code shown on your phone.";
     return;
   }
-  devices.forEach((dev) => {
-    const row = document.createElement("div");
-    row.className = "device-row" + (dev.paired ? " paired" : "");
-    row.innerHTML = `<div class="dn"><span class="dot"></span>${dev.name}</div>`;
-    const btn = document.createElement("button");
-    btn.className = "btn btn-gold";
-    btn.textContent = dev.paired ? "Paired" : "Pair";
-    btn.disabled = dev.paired;
-    btn.addEventListener("click", () => {
-      deskWs.send(JSON.stringify({ type: "pair-request", phoneId: dev.id }));
-    });
-    row.appendChild(btn);
-    deviceList.appendChild(row);
-  });
+  codeError.textContent = "";
+  submitCodeBtn.disabled = true;
+  deskWs.send(JSON.stringify({ type: "pair-request", code }));
+  setTimeout(() => { submitCodeBtn.disabled = false; }, 1500);
 }
+submitCodeBtn.addEventListener("click", submitCode);
+codeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitCode(); });
+codeInput.addEventListener("input", () => { codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 4); });
 
 /* ---------------- PWA: install + service worker ---------------- */
 if ("serviceWorker" in navigator) {

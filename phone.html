@@ -66,6 +66,11 @@
 
   .footnote{font-size:11px;color:var(--text-lo);margin-top:22px;line-height:1.5;max-width:380px;}
   .hidden{display:none !important;}
+  .code-display{
+    font-family:'Playfair Display',serif;font-weight:700;font-size:46px;letter-spacing:10px;
+    color:var(--gold-bright);text-align:center;padding:18px 0;
+    background:rgba(230,199,137,.08);border:1px solid rgba(230,199,137,.25);border-radius:14px;
+  }
 </style>
 </head>
 <body>
@@ -78,8 +83,12 @@
     <p class="desc" id="statusDesc">Make sure this phone is on the same WiFi as your computer, then connect below.</p>
 
     <div id="stepConnect">
-      <input type="text" id="deviceName" placeholder="Device name (e.g. Sohang's iPhone)" />
       <button class="btn btn-gold" id="connectBtn">Connect</button>
+    </div>
+
+    <div id="stepCode" class="hidden">
+      <div class="code-display" id="codeDisplay">····</div>
+      <p class="desc" style="margin-top:14px;margin-bottom:0;">Enter this code on your computer to pair.</p>
     </div>
 
     <div id="stepPaired" class="hidden">
@@ -102,20 +111,20 @@ const statusDot = document.getElementById("statusDot");
 const statusTitle = document.getElementById("statusTitle");
 const statusDesc = document.getElementById("statusDesc");
 const stepConnect = document.getElementById("stepConnect");
+const stepCode = document.getElementById("stepCode");
 const stepPaired = document.getElementById("stepPaired");
+const codeDisplay = document.getElementById("codeDisplay");
 const connectBtn = document.getElementById("connectBtn");
 const disconnectBtn = document.getElementById("disconnectBtn");
 const enableMotionBtn = document.getElementById("enableMotionBtn");
-const deviceNameInput = document.getElementById("deviceName");
 const readout = document.getElementById("readout");
 const accMagEl = document.getElementById("accMag");
 const rotMagEl = document.getElementById("rotMag");
 const hzEl = document.getElementById("hz");
 
-deviceNameInput.value = (navigator.userAgentData?.platform || navigator.platform || "iPhone") + " " + Math.floor(Math.random()*90+10);
+const autoName = "iPhone-" + Math.floor(Math.random() * 900 + 100);
 
 let ws = null;
-let motionEnabled = false;
 let sampleCount = 0;
 let lastHzTime = performance.now();
 
@@ -124,38 +133,60 @@ function wsUrl() {
   return proto + location.host;
 }
 
+function showStep(step) {
+  stepConnect.classList.add("hidden");
+  stepCode.classList.add("hidden");
+  stepPaired.classList.add("hidden");
+  step.classList.remove("hidden");
+}
+
 connectBtn.addEventListener("click", () => {
-  const name = deviceNameInput.value.trim() || "iPhone";
-  ws = new WebSocket(wsUrl());
+  if (location.protocol === "file:" || !location.host) {
+    statusDesc.textContent = "Open this page via its http(s):// address (from your computer's server), not as a local file.";
+    return;
+  }
+  let socket;
+  try {
+    socket = new WebSocket(wsUrl());
+  } catch (err) {
+    statusDesc.textContent = "Couldn't open a connection — see browser console.";
+    console.error("[swingvision] WebSocket failed:", err);
+    return;
+  }
+  ws = socket;
   statusDot.className = "status-dot connecting";
   statusTitle.textContent = "Connecting…";
   statusDesc.textContent = "Reaching your SwingVision server…";
   connectBtn.disabled = true;
 
   ws.addEventListener("open", () => {
-    ws.send(JSON.stringify({ type: "hello", role: "phone", name }));
+    ws.send(JSON.stringify({ type: "hello", role: "phone", name: autoName }));
   });
 
   ws.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === "welcome") {
-      statusTitle.textContent = "Waiting for pairing";
-      statusDesc.textContent = "Open SwingVision on your computer, click Connect, and select this device (" + name + ").";
+      statusDot.className = "status-dot connecting";
+      statusTitle.textContent = "Enter code on computer";
+      statusDesc.textContent = "";
+      codeDisplay.textContent = msg.code;
+      showStep(stepCode);
     }
     if (msg.type === "paired") {
       statusDot.className = "status-dot paired";
       statusDot.textContent = "🔗";
       statusTitle.textContent = "Paired with " + msg.peerName;
       statusDesc.textContent = "Tap below to enable motion sensors and start streaming swing data.";
-      stepConnect.classList.add("hidden");
-      stepPaired.classList.remove("hidden");
+      showStep(stepPaired);
     }
     if (msg.type === "unpaired") {
-      statusDot.className = "status-dot connecting";
+      statusDot.className = "status-dot";
       statusDot.textContent = "📡";
-      statusTitle.textContent = "Waiting for pairing";
-      statusDesc.textContent = "Disconnected from computer. Reselect this device from SwingVision to pair again.";
+      statusTitle.textContent = "Not connected";
+      statusDesc.textContent = "Disconnected from computer. Tap Connect to get a new code.";
       readout.style.display = "none";
+      showStep(stepConnect);
+      connectBtn.disabled = false;
     }
   });
 
@@ -164,8 +195,7 @@ connectBtn.addEventListener("click", () => {
     statusDot.textContent = "📡";
     statusTitle.textContent = "Not connected";
     statusDesc.textContent = "Connection closed. Tap Connect to try again.";
-    stepConnect.classList.remove("hidden");
-    stepPaired.classList.add("hidden");
+    showStep(stepConnect);
     connectBtn.disabled = false;
   });
 

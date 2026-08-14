@@ -153,8 +153,10 @@ function cleanup(dir) {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// clientId -> { ws, role: 'phone'|'desktop', name, pairedWith: clientId|null }
+// clientId -> { ws, role: 'phone'|'desktop', name, pairedWith: clientId|null, code: string|null }
 const clients = new Map();
+// 4-digit pairing code -> phone clientId
+const codes = new Map();
 
 function makeId() {
   return crypto.randomBytes(6).toString("hex");
@@ -164,17 +166,16 @@ function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
-function phoneList() {
-  return [...clients.values()]
-    .filter((c) => c.role === "phone")
-    .map((c) => ({ id: c.id, name: c.name, paired: !!c.pairedWith }));
+function generateCode() {
+  let code;
+  do {
+    code = String(Math.floor(1000 + Math.random() * 9000));
+  } while (codes.has(code));
+  return code;
 }
 
-function broadcastDeviceListToDesktops() {
-  const list = phoneList();
-  for (const c of clients.values()) {
-    if (c.role === "desktop") send(c.ws, { type: "device-list", devices: list });
-  }
+function releaseCode(entry) {
+  if (entry && entry.code && codes.get(entry.code) === entry.id) codes.delete(entry.code);
 }
 
 wss.on("connection", (ws) => {
@@ -186,35 +187,39 @@ wss.on("connection", (ws) => {
     try { msg = JSON.parse(raw); } catch { return; }
 
     if (msg.type === "hello") {
-      entry = { id, ws, role: msg.role, name: msg.name || (msg.role === "phone" ? "iPhone" : "Desktop"), pairedWith: null };
+      entry = { id, ws, role: msg.role, name: msg.name || (msg.role === "phone" ? "iPhone" : "Desktop"), pairedWith: null, code: null };
       clients.set(id, entry);
-      send(ws, { type: "welcome", id });
-      if (entry.role === "desktop") {
-        send(ws, { type: "device-list", devices: phoneList() });
+      if (entry.role === "phone") {
+        entry.code = generateCode();
+        codes.set(entry.code, id);
+        send(ws, { type: "welcome", id, code: entry.code });
       } else {
-        broadcastDeviceListToDesktops();
+        send(ws, { type: "welcome", id });
       }
-      console.log(`[swingvision] ${entry.role} connected: ${entry.name} (${id})`);
+      console.log(`[swingvision] ${entry.role} connected: ${entry.name} (${id})${entry.code ? " code=" + entry.code : ""}`);
       return;
     }
 
     if (!entry) return; // must say hello first
 
+    // desktop enters the 4-digit code shown on the phone to pair
     if (msg.type === "pair-request" && entry.role === "desktop") {
-      const target = clients.get(msg.phoneId);
+      const code = String(msg.code || "").trim();
+      const targetId = codes.get(code);
+      const target = targetId ? clients.get(targetId) : null;
       if (!target || target.role !== "phone") {
-        send(ws, { type: "pair-failed", reason: "Device not found — it may have disconnected." });
+        send(ws, { type: "pair-failed", reason: "Invalid or expired code. Check your phone and try again." });
         return;
       }
       // unpair any previous partners
-      if (entry.pairedWith) { const prev = clients.get(entry.pairedWith); if (prev) prev.pairedWith = null; }
-      if (target.pairedWith) { const prev = clients.get(target.pairedWith); if (prev) prev.pairedWith = null; }
+      if (entry.pairedWith) { const prev = clients.get(entry.pairedWith); if (prev) { prev.pairedWith = null; send(prev.ws, { type: "unpaired" }); } }
+      if (target.pairedWith) { const prev = clients.get(target.pairedWith); if (prev) { prev.pairedWith = null; send(prev.ws, { type: "unpaired" }); } }
       entry.pairedWith = target.id;
       target.pairedWith = entry.id;
+      releaseCode(target); // one-time use
       send(entry.ws, { type: "paired", peerId: target.id, peerName: target.name, role: "desktop" });
       send(target.ws, { type: "paired", peerId: entry.id, peerName: entry.name, role: "phone" });
-      broadcastDeviceListToDesktops();
-      console.log(`[swingvision] paired desktop(${entry.name}) <-> phone(${target.name})`);
+      console.log(`[swingvision] paired desktop(${entry.name}) <-> phone(${target.name}) via code ${code}`);
       return;
     }
 
@@ -222,7 +227,6 @@ wss.on("connection", (ws) => {
       const peer = entry.pairedWith ? clients.get(entry.pairedWith) : null;
       if (peer) { peer.pairedWith = null; send(peer.ws, { type: "unpaired" }); }
       entry.pairedWith = null;
-      broadcastDeviceListToDesktops();
       return;
     }
 
@@ -243,11 +247,11 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     if (!entry) return;
     clients.delete(id);
+    releaseCode(entry);
     if (entry.pairedWith) {
       const peer = clients.get(entry.pairedWith);
       if (peer) { peer.pairedWith = null; send(peer.ws, { type: "unpaired" }); }
     }
-    broadcastDeviceListToDesktops();
     console.log(`[swingvision] ${entry.role} disconnected: ${entry.name} (${id})`);
   });
 });
