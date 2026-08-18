@@ -665,10 +665,29 @@ function submitCode() {
     codeError.textContent = "Enter the 4-digit code shown on your phone.";
     return;
   }
+  if (!deskWs || deskWs.readyState !== WebSocket.OPEN) {
+    codeError.textContent = "Connection to the server was lost. Tap Connect again first.";
+    console.warn("[swingvision] tried to pair with no open connection. readyState:", deskWs && deskWs.readyState);
+    codeEntry.classList.add("hidden");
+    connectPhoneBtn.style.display = "inline-block";
+    connectPhoneBtn.disabled = false;
+    return;
+  }
   codeError.textContent = "";
   submitCodeBtn.disabled = true;
-  deskWs.send(JSON.stringify({ type: "pair-request", code }));
-  setTimeout(() => { submitCodeBtn.disabled = false; }, 1500);
+  try {
+    deskWs.send(JSON.stringify({ type: "pair-request", code }));
+    console.log("[swingvision] sent pair-request with code", code);
+  } catch (err) {
+    codeError.textContent = "Couldn't send the pairing request — see browser console.";
+    console.error("[swingvision] pair-request send failed:", err);
+  }
+  setTimeout(() => {
+    submitCodeBtn.disabled = false;
+    if (!codeEntry.classList.contains("hidden") && !codeError.textContent) {
+      codeError.textContent = "No response from server yet — the code may be wrong, expired, or the phone disconnected. Try again.";
+    }
+  }, 3000);
 }
 submitCodeBtn.addEventListener("click", submitCode);
 codeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitCode(); });
