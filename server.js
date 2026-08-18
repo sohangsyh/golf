@@ -189,26 +189,30 @@ wss.on("connection", (ws) => {
     if (msg.type === "hello") {
       entry = { id, ws, role: msg.role, name: msg.name || (msg.role === "phone" ? "iPhone" : "Desktop"), pairedWith: null, code: null };
       clients.set(id, entry);
-      if (entry.role === "phone") {
-        entry.code = generateCode();
-        codes.set(entry.code, id);
-        send(ws, { type: "welcome", id, code: entry.code });
-      } else {
-        send(ws, { type: "welcome", id });
-      }
-      console.log(`[swingvision] ${entry.role} connected: ${entry.name} (${id})${entry.code ? " code=" + entry.code : ""}`);
+      // every client (desktop AND phone) gets its own one-time pairing code —
+      // either side can display it (as text or a QR code) for the other to submit
+      entry.code = generateCode();
+      codes.set(entry.code, id);
+      send(ws, { type: "welcome", id, code: entry.code });
+      console.log(`[swingvision] ${entry.role} connected: ${entry.name} (${id}) code=${entry.code}`);
       return;
     }
 
     if (!entry) return; // must say hello first
 
-    // desktop enters the 4-digit code shown on the phone to pair
-    if (msg.type === "pair-request" && entry.role === "desktop") {
+    // either side can submit a code belonging to the OTHER role to pair —
+    // desktop typing a code shown on the phone, or a phone auto-submitting a
+    // code it got from a scanned QR link both use this same message type
+    if (msg.type === "pair-with-code") {
       const code = String(msg.code || "").trim();
       const targetId = codes.get(code);
       const target = targetId ? clients.get(targetId) : null;
-      if (!target || target.role !== "phone") {
-        send(ws, { type: "pair-failed", reason: "Invalid or expired code. Check your phone and try again." });
+      if (!target) {
+        send(ws, { type: "pair-failed", reason: "Invalid or expired code. Try reconnecting and scanning/entering it again." });
+        return;
+      }
+      if (target.role === entry.role) {
+        send(ws, { type: "pair-failed", reason: "That code belongs to a " + target.role + " — pairing needs one phone and one computer." });
         return;
       }
       // unpair any previous partners
@@ -217,9 +221,9 @@ wss.on("connection", (ws) => {
       entry.pairedWith = target.id;
       target.pairedWith = entry.id;
       releaseCode(target); // one-time use
-      send(entry.ws, { type: "paired", peerId: target.id, peerName: target.name, role: "desktop" });
-      send(target.ws, { type: "paired", peerId: entry.id, peerName: entry.name, role: "phone" });
-      console.log(`[swingvision] paired desktop(${entry.name}) <-> phone(${target.name}) via code ${code}`);
+      send(entry.ws, { type: "paired", peerId: target.id, peerName: target.name, role: entry.role });
+      send(target.ws, { type: "paired", peerId: entry.id, peerName: entry.name, role: target.role });
+      console.log(`[swingvision] paired ${entry.role}(${entry.name}) <-> ${target.role}(${target.name}) via code ${code}`);
       return;
     }
 

@@ -213,6 +213,39 @@
   .metric-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--emerald-bright),var(--gold-bright));transition:width .8s ease;}
 
   footer{text-align:center;padding:30px;color:var(--text-lo);font-size:11.5px;letter-spacing:.5px;}
+  .hidden{display:none !important;}
+
+  .qr-overlay{
+    position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+    background:rgba(3,4,5,0.78);backdrop-filter:blur(6px);padding:20px;
+    animation:fadeIn .2s ease both;
+  }
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  .qr-card{
+    position:relative;width:100%;max-width:340px;text-align:center;
+    background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+    border:1px solid var(--panel-border);border-radius:22px;padding:32px 28px 28px;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  .qr-close{
+    position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;
+    background:rgba(255,255,255,.06);border:1px solid var(--panel-border);color:var(--text-mid);
+    font-size:16px;cursor:pointer;line-height:1;
+  }
+  .qr-close:hover{color:var(--text-hi);}
+  .qr-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:600;margin-bottom:8px;}
+  .qr-sub{font-size:12px;color:var(--text-mid);line-height:1.5;margin-bottom:20px;}
+  .qr-canvas-wrap{
+    background:#f3f1ec;border-radius:14px;padding:14px;display:inline-flex;
+    align-items:center;justify-content:center;min-width:200px;min-height:200px;
+  }
+  .qr-canvas-wrap canvas{display:block;}
+  .qr-code-text{
+    margin-top:16px;font-family:'Playfair Display',serif;font-size:22px;letter-spacing:6px;
+    color:var(--gold-bright);
+  }
+  .qr-status{margin-top:10px;font-size:11.5px;color:var(--text-lo);}
+  .qr-status.paired{color:var(--emerald-bright);}
 
   .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
   .sensor-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;}
@@ -284,12 +317,12 @@
 
     <div class="sensor-block">
       <div class="sensor-header">
-        <div class="sensor-title">Club Sensor <small id="sensorSub">Not connected</small></div>
+        <div class="sensor-title">Club Sensor <small id="sensorSub">Connecting…</small></div>
         <button class="btn btn-outline" id="connectPhoneBtn">Connect</button>
       </div>
 
-      <div class="code-entry hidden" id="codeEntry">
-        <p class="code-hint">Open the Club Sensor page on your phone, then enter the 4-digit code it shows:</p>
+      <div class="code-entry" id="codeEntry">
+        <p class="code-hint">Or enter a code shown on your phone manually:</p>
         <div class="code-entry-row">
           <input type="text" id="codeInput" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" />
           <button class="btn btn-gold" id="submitCodeBtn">Pair</button>
@@ -374,6 +407,18 @@
 
 <video id="uploadVideo" style="display:none" playsinline muted></video>
 
+<div class="qr-overlay hidden" id="qrOverlay">
+  <div class="qr-card">
+    <button class="qr-close" id="qrCloseBtn" aria-label="Close">×</button>
+    <div class="qr-title">Scan with your iPhone</div>
+    <p class="qr-sub">Open Camera and point it at this code — it'll open Safari and pair automatically.</p>
+    <div class="qr-canvas-wrap"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
+    <div class="qr-code-text" id="qrCodeText">····</div>
+    <div class="qr-status" id="qrStatus">Waiting for phone to scan…</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script type="module">
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
@@ -555,7 +600,7 @@ function lerpNorm(a,b,t){
 }
 requestAnimationFrame(ghostLoop);
 
-/* ---------------- Club sensor: single-button connect + 4-digit code pairing ---------------- */
+/* ---------------- Club sensor: QR-code auto-pairing with phone ---------------- */
 const connectPhoneBtn = document.getElementById("connectPhoneBtn");
 const sensorSub = document.getElementById("sensorSub");
 const codeEntry = document.getElementById("codeEntry");
@@ -566,8 +611,15 @@ const sensorReadout = document.getElementById("sensorReadout");
 const phAccMag = document.getElementById("phAccMag");
 const phRotMag = document.getElementById("phRotMag");
 const phHz = document.getElementById("phHz");
+const qrOverlay = document.getElementById("qrOverlay");
+const qrCanvas = document.getElementById("qrCanvas");
+const qrCodeText = document.getElementById("qrCodeText");
+const qrStatus = document.getElementById("qrStatus");
+const qrCloseBtn = document.getElementById("qrCloseBtn");
 
 let deskWs = null;
+let myCode = null; // this desktop's own pairing code, assigned by the server on connect
+let isPaired = false;
 let phoneMsgCount = 0, phoneLastHz = performance.now();
 window.latestClubMotion = null; // exposed so the recording/scoring pipeline can read it later
 
@@ -576,11 +628,39 @@ function deskWsUrl() {
   return proto + location.host;
 }
 
+function renderQr() {
+  if (!myCode) {
+    qrStatus.textContent = "Connecting to server…";
+    return;
+  }
+  const phoneUrl = `${location.origin}/phone.html?code=${myCode}`;
+  qrCodeText.textContent = myCode;
+  qrStatus.textContent = "Waiting for phone to scan…";
+  qrStatus.classList.remove("paired");
+  if (window.QRCode && window.QRCode.toCanvas) {
+    window.QRCode.toCanvas(qrCanvas, phoneUrl, { width: 200, margin: 1, color: { dark: "#0d0f12", light: "#f3f1ecff" } }, (err) => {
+      if (err) console.error("[swingvision] QR render failed:", err);
+    });
+  } else {
+    console.error("[swingvision] QR library not loaded — open this link manually on your phone:", phoneUrl);
+    qrStatus.textContent = "QR unavailable — open this on your phone: " + phoneUrl;
+  }
+}
+
 connectPhoneBtn.addEventListener("click", () => {
-  if (deskWs && deskWs.readyState === WebSocket.OPEN) return; // already connecting/connected
+  connectClubSensor(); // no-op if already connected/connecting
+  qrOverlay.classList.remove("hidden");
+  renderQr();
+});
+qrCloseBtn.addEventListener("click", () => qrOverlay.classList.add("hidden"));
+qrOverlay.addEventListener("click", (e) => { if (e.target === qrOverlay) qrOverlay.classList.add("hidden"); });
+
+function connectClubSensor() {
+  if (deskWs && (deskWs.readyState === WebSocket.OPEN || deskWs.readyState === WebSocket.CONNECTING)) return;
   if (location.protocol === "file:" || !location.host) {
     sensorSub.textContent = "Open this page via http://localhost:8787, not as a local file";
     sensorSub.classList.remove("connected");
+    connectPhoneBtn.classList.remove("hidden");
     console.error("[swingvision] Club Sensor needs the page served by the local server. " +
       "Run `npm start` in the SwingVision folder, then open http://localhost:8787/index.html " +
       "(current location: " + location.href + ")");
@@ -604,27 +684,30 @@ connectPhoneBtn.addEventListener("click", () => {
   deskWs.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === "welcome") {
-      sensorSub.textContent = "Ready — waiting for code";
-      connectPhoneBtn.style.display = "none";
-      codeEntry.classList.remove("hidden");
-      codeInput.focus();
+      myCode = msg.code;
+      sensorSub.textContent = "Ready — click Connect to pair";
+      if (!qrOverlay.classList.contains("hidden")) renderQr(); // modal was already open, waiting on this
     }
     if (msg.type === "paired") {
+      isPaired = true;
       sensorSub.textContent = "Connected — " + msg.peerName;
       sensorSub.classList.add("connected");
-      codeEntry.classList.add("hidden");
       sensorReadout.style.display = "grid";
       codeError.textContent = "";
+      qrStatus.textContent = "Paired with " + msg.peerName + "!";
+      qrStatus.classList.add("paired");
+      setTimeout(() => qrOverlay.classList.add("hidden"), 900);
     }
     if (msg.type === "pair-failed") {
       codeError.textContent = msg.reason || "Pairing failed — try again.";
       submitCodeBtn.disabled = false;
+      qrStatus.textContent = msg.reason || "Pairing failed — try again.";
     }
     if (msg.type === "unpaired") {
-      sensorSub.textContent = "Ready — waiting for code";
+      isPaired = false;
+      sensorSub.textContent = "Ready — click Connect to pair";
       sensorSub.classList.remove("connected");
       sensorReadout.style.display = "none";
-      codeEntry.classList.remove("hidden");
     }
     if (msg.type === "motion") {
       window.latestClubMotion = msg.data;
@@ -645,10 +728,9 @@ connectPhoneBtn.addEventListener("click", () => {
       sensorSub.textContent = "Not connected (code " + ev.code + ")";
     }
     sensorSub.classList.remove("connected");
-    codeEntry.classList.add("hidden");
     sensorReadout.style.display = "none";
-    connectPhoneBtn.style.display = "inline-block";
     connectPhoneBtn.disabled = false;
+    myCode = null; isPaired = false;
     deskWs = null;
     console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason, "url:", deskWsUrl());
   });
@@ -657,7 +739,10 @@ connectPhoneBtn.addEventListener("click", () => {
     // overwriting it with a generic message here.
     console.error("[swingvision] Club Sensor WebSocket error:", err, "url attempted:", deskWsUrl());
   });
-});
+}
+
+// auto-connect as soon as the page loads — no click required
+connectClubSensor();
 
 function submitCode() {
   const code = codeInput.value.trim();
@@ -666,25 +751,22 @@ function submitCode() {
     return;
   }
   if (!deskWs || deskWs.readyState !== WebSocket.OPEN) {
-    codeError.textContent = "Connection to the server was lost. Tap Connect again first.";
+    codeError.textContent = "Connection to the server was lost. Tap Connect (above) again first.";
     console.warn("[swingvision] tried to pair with no open connection. readyState:", deskWs && deskWs.readyState);
-    codeEntry.classList.add("hidden");
-    connectPhoneBtn.style.display = "inline-block";
-    connectPhoneBtn.disabled = false;
     return;
   }
   codeError.textContent = "";
   submitCodeBtn.disabled = true;
   try {
-    deskWs.send(JSON.stringify({ type: "pair-request", code }));
-    console.log("[swingvision] sent pair-request with code", code);
+    deskWs.send(JSON.stringify({ type: "pair-with-code", code }));
+    console.log("[swingvision] sent pair-with-code", code);
   } catch (err) {
     codeError.textContent = "Couldn't send the pairing request — see browser console.";
     console.error("[swingvision] pair-request send failed:", err);
   }
   setTimeout(() => {
     submitCodeBtn.disabled = false;
-    if (!codeEntry.classList.contains("hidden") && !codeError.textContent) {
+    if (!isPaired && !codeError.textContent) {
       codeError.textContent = "No response from server yet — the code may be wrong, expired, or the phone disconnected. Try again.";
     }
   }, 3000);

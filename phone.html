@@ -78,12 +78,12 @@
   <div class="subtitle">Club Sensor Mode</div>
 
   <div class="card">
-    <div class="status-dot" id="statusDot">📡</div>
-    <h1 id="statusTitle">Not connected</h1>
-    <p class="desc" id="statusDesc">Make sure this phone is on the same WiFi as your computer, then connect below.</p>
+    <div class="status-dot connecting" id="statusDot">📡</div>
+    <h1 id="statusTitle">Connecting…</h1>
+    <p class="desc" id="statusDesc">Reaching your SwingVision server automatically…</p>
 
     <div id="stepConnect">
-      <button class="btn btn-gold" id="connectBtn">Connect</button>
+      <button class="btn btn-gold hidden" id="connectBtn">Connect</button>
     </div>
 
     <div id="stepCode" class="hidden">
@@ -140,9 +140,11 @@ function showStep(step) {
   step.classList.remove("hidden");
 }
 
-connectBtn.addEventListener("click", () => {
+function doConnect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (location.protocol === "file:" || !location.host) {
     statusDesc.textContent = "Open this page via its http(s):// address (from your computer's server), not as a local file.";
+    connectBtn.classList.remove("hidden");
     return;
   }
   let socket;
@@ -166,11 +168,21 @@ connectBtn.addEventListener("click", () => {
   ws.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === "welcome") {
-      statusDot.className = "status-dot connecting";
-      statusTitle.textContent = "Enter code on computer";
-      statusDesc.textContent = "";
       codeDisplay.textContent = msg.code;
-      showStep(stepCode);
+      const scannedCode = new URLSearchParams(location.search).get("code");
+      if (scannedCode) {
+        // opened via a scanned QR link — pair automatically, no typing needed
+        statusDot.className = "status-dot connecting";
+        statusTitle.textContent = "Pairing automatically…";
+        statusDesc.textContent = "";
+        showStep(stepCode);
+        ws.send(JSON.stringify({ type: "pair-with-code", code: scannedCode }));
+      } else {
+        statusDot.className = "status-dot connecting";
+        statusTitle.textContent = "Enter code on computer";
+        statusDesc.textContent = "Or tap Connect on your computer and scan its QR code instead.";
+        showStep(stepCode);
+      }
     }
     if (msg.type === "paired") {
       statusDot.className = "status-dot paired";
@@ -179,6 +191,10 @@ connectBtn.addEventListener("click", () => {
       statusDesc.textContent = "Tap below to enable motion sensors and start streaming swing data.";
       showStep(stepPaired);
     }
+    if (msg.type === "pair-failed") {
+      statusTitle.textContent = "Auto-pairing failed";
+      statusDesc.textContent = (msg.reason || "") + " Your own code is still shown below if you'd rather enter it manually on the computer.";
+    }
     if (msg.type === "unpaired") {
       statusDot.className = "status-dot";
       statusDot.textContent = "📡";
@@ -186,7 +202,7 @@ connectBtn.addEventListener("click", () => {
       statusDesc.textContent = "Disconnected from computer. Tap Connect to get a new code.";
       readout.style.display = "none";
       showStep(stepConnect);
-      connectBtn.disabled = false;
+      connectBtn.disabled = false; connectBtn.classList.remove("hidden");
     }
   });
 
@@ -203,7 +219,7 @@ connectBtn.addEventListener("click", () => {
       statusDesc.textContent = "Disconnected (code " + ev.code + "). Tap Connect to try again.";
     }
     showStep(stepConnect);
-    connectBtn.disabled = false;
+    connectBtn.disabled = false; connectBtn.classList.remove("hidden");
     console.warn("[swingvision] phone WebSocket closed", ev.code, ev.reason, "url:", wsUrl());
   });
 
@@ -212,7 +228,11 @@ connectBtn.addEventListener("click", () => {
     // the 'close' event fires right after this with more useful detail (see above) —
     // intentionally not overwriting statusDesc here so that message isn't lost.
   });
-});
+}
+
+// auto-connect as soon as the page loads — no tap required
+doConnect();
+connectBtn.addEventListener("click", doConnect);
 
 disconnectBtn.addEventListener("click", () => {
   if (ws) { ws.send(JSON.stringify({ type: "unpair" })); ws.close(); }
