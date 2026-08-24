@@ -166,19 +166,6 @@
   .file-label{flex:1;text-align:center;}
   .small-note{font-size:11.5px;color:var(--text-lo);margin-top:10px;line-height:1.5;}
 
-  .yt-block{margin-top:22px;padding-top:20px;border-top:1px solid var(--panel-border);}
-  .yt-divider{text-align:center;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-lo);margin-bottom:14px;}
-  .yt-input{
-    width:100%;padding:11px 14px;border-radius:10px;
-    background:rgba(255,255,255,.03);border:1px solid var(--panel-border);
-    color:var(--text-hi);font-family:'Inter';font-size:13px;margin-bottom:10px;
-    outline:none;transition:.2s;
-  }
-  .yt-input:focus{border-color:var(--gold);background:rgba(255,255,255,.05);}
-  .yt-time-row{display:flex;gap:10px;}
-  .yt-time{flex:1;margin-bottom:0;}
-  .yt-time-row .btn{flex-shrink:0;white-space:nowrap;}
-
   /* Results */
   .results{margin-top:24px;}
   .score-row{display:flex;align-items:center;gap:22px;}
@@ -252,17 +239,6 @@
   .sensor-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;display:flex;flex-direction:column;gap:2px;}
   .sensor-title small{font-family:'Inter';font-size:10.5px;color:var(--text-lo);letter-spacing:1px;text-transform:uppercase;font-weight:500;}
   .sensor-title small.connected{color:var(--emerald-bright);}
-  .code-entry{margin-top:4px;}
-  .code-hint{font-size:12px;color:var(--text-mid);line-height:1.5;margin-bottom:10px;}
-  .code-entry-row{display:flex;gap:10px;}
-  .code-entry-row input{
-    flex:1;text-align:center;font-family:'Playfair Display',serif;font-size:22px;letter-spacing:8px;
-    padding:10px 8px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--panel-border);
-    color:var(--gold-bright);outline:none;
-  }
-  .code-entry-row input:focus{border-color:var(--gold);}
-  .code-entry-row button{flex-shrink:0;}
-  .code-error{font-size:11.5px;color:var(--danger);margin-top:8px;min-height:14px;}
   .sensor-readout{margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
   .sensor-readout div{background:rgba(255,255,255,.03);border:1px solid var(--panel-border);border-radius:9px;padding:8px 4px;text-align:center;}
   .sensor-readout b{display:block;font-family:'Playfair Display',serif;font-size:14px;}
@@ -317,17 +293,8 @@
 
     <div class="sensor-block">
       <div class="sensor-header">
-        <div class="sensor-title">Club Sensor <small id="sensorSub">Connecting…</small></div>
+        <div class="sensor-title">Club Sensor <small id="sensorSub">Not connected</small></div>
         <button class="btn btn-outline" id="connectPhoneBtn">Connect</button>
-      </div>
-
-      <div class="code-entry" id="codeEntry">
-        <p class="code-hint">Or enter a code shown on your phone manually:</p>
-        <div class="code-entry-row">
-          <input type="text" id="codeInput" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" />
-          <button class="btn btn-gold" id="submitCodeBtn">Pair</button>
-        </div>
-        <div class="code-error" id="codeError"></div>
       </div>
 
       <div class="sensor-readout" id="sensorReadout" style="display:none;">
@@ -387,19 +354,6 @@
     <div class="small-note" id="uploadStatus">
       Upload a short side-on video of a swing you want to train against. SwingVision will extract its skeleton and use it as your custom standard for the selected shot type.
     </div>
-
-    <div class="yt-block">
-      <div class="yt-divider"><span>or pull a clip from YouTube</span></div>
-      <input type="text" id="ytUrl" class="yt-input" placeholder="https://www.youtube.com/watch?v=..." />
-      <div class="yt-time-row">
-        <input type="text" id="ytStart" class="yt-input yt-time" placeholder="Start 10:30" />
-        <input type="text" id="ytEnd" class="yt-input yt-time" placeholder="End 10:34" />
-        <button class="btn btn-gold" id="ytFetchBtn">Fetch Clip</button>
-      </div>
-      <div class="small-note" id="ytStatus">
-        Requires the free local SwingVision clip helper (server.js, included) running on your machine — it downloads and trims just this timestamp range using yt-dlp + ffmpeg, then feeds it into the same skeleton-extraction pipeline as an uploaded video. See the README for one-time setup. Please only fetch clips you have the right to use.
-      </div>
-    </div>
   </section>
 </main>
 
@@ -413,12 +367,14 @@
     <div class="qr-title">Scan with your iPhone</div>
     <p class="qr-sub">Open Camera and point it at this code — it'll open Safari and pair automatically.</p>
     <div class="qr-canvas-wrap"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
-    <div class="qr-code-text" id="qrCodeText">····</div>
+    <button class="btn btn-outline" id="qrCopyLinkBtn" style="margin-top:14px;">Copy Link Instead</button>
     <div class="qr-status" id="qrStatus">Waiting for phone to scan…</div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
 <script type="module">
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
@@ -600,118 +556,102 @@ function lerpNorm(a,b,t){
 }
 requestAnimationFrame(ghostLoop);
 
-/* ---------------- Club sensor: QR-code auto-pairing with phone ---------------- */
+/* ---------------- Club sensor: QR-code auto-pairing via Supabase Realtime ----------------
+ * No server of our own anymore — the phone and this page each open a channel on
+ * Supabase's hosted Realtime service (a managed WebSocket pub/sub) named after a
+ * random pairing ID. Scanning the QR just sends the phone straight to phone.html
+ * with that ID in the URL, so it joins the same channel automatically — no typed
+ * code, no local server, no ngrok, and phone + computer don't even need to be on
+ * the same WiFi (both just need internet access to reach Supabase). */
 const connectPhoneBtn = document.getElementById("connectPhoneBtn");
 const sensorSub = document.getElementById("sensorSub");
-const codeEntry = document.getElementById("codeEntry");
-const codeInput = document.getElementById("codeInput");
-const submitCodeBtn = document.getElementById("submitCodeBtn");
-const codeError = document.getElementById("codeError");
 const sensorReadout = document.getElementById("sensorReadout");
 const phAccMag = document.getElementById("phAccMag");
 const phRotMag = document.getElementById("phRotMag");
 const phHz = document.getElementById("phHz");
 const qrOverlay = document.getElementById("qrOverlay");
 const qrCanvas = document.getElementById("qrCanvas");
-const qrCodeText = document.getElementById("qrCodeText");
 const qrStatus = document.getElementById("qrStatus");
 const qrCloseBtn = document.getElementById("qrCloseBtn");
+const qrCopyLinkBtn = document.getElementById("qrCopyLinkBtn");
 
-let deskWs = null;
-let myCode = null; // this desktop's own pairing code, assigned by the server on connect
+let sbClient = null;
+let pairChannel = null;
 let isPaired = false;
 let phoneMsgCount = 0, phoneLastHz = performance.now();
 window.latestClubMotion = null; // exposed so the recording/scoring pipeline can read it later
 
-function deskWsUrl() {
-  const proto = location.protocol === "https:" ? "wss://" : "ws://";
-  return proto + location.host;
+function randomPairId(len = 12) {
+  const chars = "abcdefghijkmnpqrstuvwxyz23456789"; // no ambiguous chars
+  let out = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  for (let i = 0; i < len; i++) out += chars[bytes[i] % chars.length];
+  return out;
 }
 
-function renderQr() {
-  if (!myCode) {
-    qrStatus.textContent = "Connecting to server…";
+function getSupabaseClient() {
+  if (sbClient) return sbClient;
+  if (!window.supabase || !window.SWINGVISION_SUPABASE_URL || !window.SWINGVISION_SUPABASE_ANON_KEY ||
+      window.SWINGVISION_SUPABASE_URL.includes("YOUR-PROJECT")) {
+    return null;
+  }
+  sbClient = window.supabase.createClient(window.SWINGVISION_SUPABASE_URL, window.SWINGVISION_SUPABASE_ANON_KEY);
+  return sbClient;
+}
+
+connectPhoneBtn.addEventListener("click", () => {
+  const client = getSupabaseClient();
+  if (!client) {
+    sensorSub.textContent = "Supabase not configured — see README";
+    qrOverlay.classList.remove("hidden");
+    qrStatus.textContent = "supabase-config.js needs your project URL and anon key filled in before Club Sensor can work. See the README.";
+    console.error("[swingvision] Missing/placeholder Supabase config in supabase-config.js");
     return;
   }
-  const phoneUrl = `${location.origin}/phone.html?code=${myCode}`;
-  qrCodeText.textContent = myCode;
+  openPairingChannel(client);
+});
+
+function openPairingChannel(client) {
+  if (pairChannel) client.removeChannel(pairChannel); // fresh channel each time Connect is clicked
+  isPaired = false;
+  const pairId = randomPairId();
+  const phoneUrl = `${location.origin}/phone.html?pair=${pairId}`;
+
+  qrOverlay.classList.remove("hidden");
   qrStatus.textContent = "Waiting for phone to scan…";
   qrStatus.classList.remove("paired");
+  sensorSub.textContent = "Waiting for phone…";
+
   if (window.QRCode && window.QRCode.toCanvas) {
     window.QRCode.toCanvas(qrCanvas, phoneUrl, { width: 200, margin: 1, color: { dark: "#0d0f12", light: "#f3f1ecff" } }, (err) => {
       if (err) console.error("[swingvision] QR render failed:", err);
     });
   } else {
-    console.error("[swingvision] QR library not loaded — open this link manually on your phone:", phoneUrl);
-    qrStatus.textContent = "QR unavailable — open this on your phone: " + phoneUrl;
+    console.error("[swingvision] QR library not loaded — link:", phoneUrl);
   }
-}
+  qrCopyLinkBtn.onclick = () => {
+    navigator.clipboard?.writeText(phoneUrl).then(
+      () => { qrCopyLinkBtn.textContent = "Copied!"; setTimeout(() => (qrCopyLinkBtn.textContent = "Copy Link Instead"), 1500); },
+      () => alert(phoneUrl)
+    );
+  };
 
-connectPhoneBtn.addEventListener("click", () => {
-  connectClubSensor(); // no-op if already connected/connecting
-  qrOverlay.classList.remove("hidden");
-  renderQr();
-});
-qrCloseBtn.addEventListener("click", () => qrOverlay.classList.add("hidden"));
-qrOverlay.addEventListener("click", (e) => { if (e.target === qrOverlay) qrOverlay.classList.add("hidden"); });
-
-function connectClubSensor() {
-  if (deskWs && (deskWs.readyState === WebSocket.OPEN || deskWs.readyState === WebSocket.CONNECTING)) return;
-  if (location.protocol === "file:" || !location.host) {
-    sensorSub.textContent = "Open this page via http://localhost:8787, not as a local file";
-    sensorSub.classList.remove("connected");
-    connectPhoneBtn.classList.remove("hidden");
-    console.error("[swingvision] Club Sensor needs the page served by the local server. " +
-      "Run `npm start` in the SwingVision folder, then open http://localhost:8787/index.html " +
-      "(current location: " + location.href + ")");
-    return;
-  }
-  let ws;
-  try {
-    ws = new WebSocket(deskWsUrl());
-  } catch (err) {
-    sensorSub.textContent = "Couldn't open a connection — see browser console";
-    console.error("[swingvision] WebSocket constructor failed:", err, "url attempted:", deskWsUrl());
-    return;
-  }
-  deskWs = ws;
-  sensorSub.textContent = "Connecting…";
-  connectPhoneBtn.disabled = true;
-
-  deskWs.addEventListener("open", () => {
-    deskWs.send(JSON.stringify({ type: "hello", role: "desktop", name: "Desktop" }));
-  });
-  deskWs.addEventListener("message", (evt) => {
-    const msg = JSON.parse(evt.data);
-    if (msg.type === "welcome") {
-      myCode = msg.code;
-      sensorSub.textContent = "Ready — click Connect to pair";
-      if (!qrOverlay.classList.contains("hidden")) renderQr(); // modal was already open, waiting on this
-    }
-    if (msg.type === "paired") {
+  pairChannel = client.channel(`swingvision-${pairId}`, { config: { broadcast: { self: false } } });
+  pairChannel
+    .on("broadcast", { event: "phone-hello" }, (msg) => {
       isPaired = true;
-      sensorSub.textContent = "Connected — " + msg.peerName;
+      const peerName = msg.payload?.name || "iPhone";
+      sensorSub.textContent = "Connected — " + peerName;
       sensorSub.classList.add("connected");
       sensorReadout.style.display = "grid";
-      codeError.textContent = "";
-      qrStatus.textContent = "Paired with " + msg.peerName + "!";
+      qrStatus.textContent = "Paired with " + peerName + "!";
       qrStatus.classList.add("paired");
+      pairChannel.send({ type: "broadcast", event: "paired", payload: { name: "Desktop" } });
       setTimeout(() => qrOverlay.classList.add("hidden"), 900);
-    }
-    if (msg.type === "pair-failed") {
-      codeError.textContent = msg.reason || "Pairing failed — try again.";
-      submitCodeBtn.disabled = false;
-      qrStatus.textContent = msg.reason || "Pairing failed — try again.";
-    }
-    if (msg.type === "unpaired") {
-      isPaired = false;
-      sensorSub.textContent = "Ready — click Connect to pair";
-      sensorSub.classList.remove("connected");
-      sensorReadout.style.display = "none";
-    }
-    if (msg.type === "motion") {
-      window.latestClubMotion = msg.data;
-      const d = msg.data;
+    })
+    .on("broadcast", { event: "motion" }, (msg) => {
+      window.latestClubMotion = msg.payload;
+      const d = msg.payload;
       const accMag = Math.sqrt((d.ax||0)**2 + (d.ay||0)**2 + (d.az||0)**2) / 9.81;
       const rotMag = Math.sqrt((d.ra||0)**2 + (d.rb||0)**2 + (d.rg||0)**2);
       phAccMag.textContent = accMag.toFixed(2);
@@ -719,61 +659,34 @@ function connectClubSensor() {
       phoneMsgCount++;
       const now = performance.now();
       if (now - phoneLastHz > 1000) { phHz.textContent = phoneMsgCount; phoneMsgCount = 0; phoneLastHz = now; }
-    }
-  });
-  deskWs.addEventListener("close", (ev) => {
-    if (ev.code === 1006 || ev.code === 1015) {
-      sensorSub.textContent = "Couldn't reach a server — is `npm start` running?";
-    } else {
-      sensorSub.textContent = "Not connected (code " + ev.code + ")";
-    }
-    sensorSub.classList.remove("connected");
-    sensorReadout.style.display = "none";
-    connectPhoneBtn.disabled = false;
-    myCode = null; isPaired = false;
-    deskWs = null;
-    console.warn("[swingvision] Club Sensor WebSocket closed", ev.code, ev.reason, "url:", deskWsUrl());
-  });
-  deskWs.addEventListener("error", (err) => {
-    // 'close' fires right after with more specific detail — see above; avoid
-    // overwriting it with a generic message here.
-    console.error("[swingvision] Club Sensor WebSocket error:", err, "url attempted:", deskWsUrl());
-  });
-}
+    })
+    .on("broadcast", { event: "phone-left" }, () => {
+      isPaired = false;
+      sensorSub.textContent = "Not connected";
+      sensorSub.classList.remove("connected");
+      sensorReadout.style.display = "none";
+    })
+    .subscribe((status, err) => {
+      if (status === "SUBSCRIBED") {
+        console.log("[swingvision] pairing channel ready:", pairId);
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        sensorSub.textContent = "Couldn't reach Supabase — check your config/internet";
+        qrStatus.textContent = "Couldn't reach Supabase Realtime. Check supabase-config.js and your internet connection.";
+        console.error("[swingvision] Supabase channel error:", status, err);
+      }
+    });
 
-// auto-connect as soon as the page loads — no click required
-connectClubSensor();
-
-function submitCode() {
-  const code = codeInput.value.trim();
-  if (!/^\d{4}$/.test(code)) {
-    codeError.textContent = "Enter the 4-digit code shown on your phone.";
-    return;
-  }
-  if (!deskWs || deskWs.readyState !== WebSocket.OPEN) {
-    codeError.textContent = "Connection to the server was lost. Tap Connect (above) again first.";
-    console.warn("[swingvision] tried to pair with no open connection. readyState:", deskWs && deskWs.readyState);
-    return;
-  }
-  codeError.textContent = "";
-  submitCodeBtn.disabled = true;
-  try {
-    deskWs.send(JSON.stringify({ type: "pair-with-code", code }));
-    console.log("[swingvision] sent pair-with-code", code);
-  } catch (err) {
-    codeError.textContent = "Couldn't send the pairing request — see browser console.";
-    console.error("[swingvision] pair-request send failed:", err);
-  }
+  // if nobody scans within a while, say so instead of leaving the QR up forever
   setTimeout(() => {
-    submitCodeBtn.disabled = false;
-    if (!isPaired && !codeError.textContent) {
-      codeError.textContent = "No response from server yet — the code may be wrong, expired, or the phone disconnected. Try again.";
+    if (!isPaired && !qrOverlay.classList.contains("hidden")) {
+      qrStatus.textContent = "Still waiting — make sure your phone has internet access and try scanning again.";
     }
-  }, 3000);
+  }, 30000);
 }
-submitCodeBtn.addEventListener("click", submitCode);
-codeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitCode(); });
-codeInput.addEventListener("input", () => { codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 4); });
+
+qrCloseBtn.addEventListener("click", () => qrOverlay.classList.add("hidden"));
+qrOverlay.addEventListener("click", (e) => { if (e.target === qrOverlay) qrOverlay.classList.add("hidden"); });
 
 /* ---------------- PWA: install + service worker ---------------- */
 if ("serviceWorker" in navigator) {
@@ -1095,54 +1008,10 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel){
   PHASES.forEach(p=>{ ghostSet[p]=toGhostPts(phasesLM[p]); });
   customGhost[currentShot] = ghostSet;
 
-  document.getElementById("ghostSource").textContent = sourceLabel==="youtube" ? "Custom YouTube reference" : "Custom uploaded reference";
-  statusEl.textContent = `Custom ${currentShot} reference saved from ${sourceLabel==="youtube"?"YouTube clip":"upload"} — this now replaces the built-in standard for ${currentShot}.`;
+  document.getElementById("ghostSource").textContent = "Custom uploaded reference";
+  statusEl.textContent = `Custom ${currentShot} reference saved from your upload — this now replaces the built-in standard for ${currentShot}.`;
 }
 
-/* ---------------- YouTube clip fetch (via local helper server) ---------------- */
-const CLIP_SERVER = "http://localhost:8787";
-const ytUrl = document.getElementById("ytUrl");
-const ytStart = document.getElementById("ytStart");
-const ytEnd = document.getElementById("ytEnd");
-const ytStatus = document.getElementById("ytStatus");
-const ytFetchBtn = document.getElementById("ytFetchBtn");
-
-ytFetchBtn.addEventListener("click", async ()=>{
-  const url = ytUrl.value.trim();
-  const start = ytStart.value.trim();
-  const end = ytEnd.value.trim();
-  if(!url || !start || !end){
-    ytStatus.textContent = "Enter a YouTube URL and both a start and end timestamp (e.g. 10:30 and 10:34).";
-    return;
-  }
-  ytFetchBtn.disabled = true;
-  ytStatus.textContent = "Contacting local clip helper server…";
-  try{
-    const health = await fetch(`${CLIP_SERVER}/health`).then(r=>r.json()).catch(()=>null);
-    if(!health || !health.ok){
-      ytStatus.textContent = "Local clip helper isn't running (or is missing yt-dlp/ffmpeg). Start it with `npm start` in the SwingVision folder — see README for setup.";
-      ytFetchBtn.disabled = false;
-      return;
-    }
-    ytStatus.textContent = "Downloading & trimming clip (this can take up to ~30s)…";
-    const clipUrl = `${CLIP_SERVER}/clip?url=${encodeURIComponent(url)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
-    const resp = await fetch(clipUrl);
-    if(!resp.ok){
-      const errJson = await resp.json().catch(()=>({error:"Unknown error"}));
-      ytStatus.textContent = "Clip fetch failed: " + errJson.error;
-      ytFetchBtn.disabled = false;
-      return;
-    }
-    const blob = await resp.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    await processGestureVideo(blobUrl, ytStatus, "youtube");
-  }catch(err){
-    console.error(err);
-    ytStatus.textContent = "Couldn't reach the local clip helper server at localhost:8787. Make sure it's running (`npm start`).";
-  }finally{
-    ytFetchBtn.disabled = false;
-  }
-});
 </script>
 </body>
 </html>

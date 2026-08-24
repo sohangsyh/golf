@@ -45,12 +45,6 @@
   h1{font-family:'Playfair Display',serif;font-size:19px;margin-bottom:8px;font-weight:600;}
   p.desc{font-size:13px;color:var(--text-mid);line-height:1.55;margin-bottom:22px;}
 
-  input[type=text]{
-    width:100%;padding:13px 15px;border-radius:11px;background:rgba(255,255,255,.03);
-    border:1px solid var(--panel-border);color:var(--text-hi);font-size:14px;margin-bottom:14px;outline:none;
-  }
-  input[type=text]:focus{border-color:var(--gold);}
-
   .btn{appearance:none;border:none;cursor:pointer;font-family:'Inter';font-weight:600;font-size:14px;
     padding:14px 22px;border-radius:12px;width:100%;transition:.15s;}
   .btn:active{transform:scale(.97);}
@@ -66,11 +60,6 @@
 
   .footnote{font-size:11px;color:var(--text-lo);margin-top:22px;line-height:1.5;max-width:380px;}
   .hidden{display:none !important;}
-  .code-display{
-    font-family:'Playfair Display',serif;font-weight:700;font-size:46px;letter-spacing:10px;
-    color:var(--gold-bright);text-align:center;padding:18px 0;
-    background:rgba(230,199,137,.08);border:1px solid rgba(230,199,137,.25);border-radius:14px;
-  }
 </style>
 </head>
 <body>
@@ -80,20 +69,10 @@
   <div class="card">
     <div class="status-dot connecting" id="statusDot">📡</div>
     <h1 id="statusTitle">Connecting…</h1>
-    <p class="desc" id="statusDesc">Reaching your SwingVision server automatically…</p>
-
-    <div id="stepConnect">
-      <button class="btn btn-gold hidden" id="connectBtn">Connect</button>
-    </div>
-
-    <div id="stepCode" class="hidden">
-      <div class="code-display" id="codeDisplay">····</div>
-      <p class="desc" style="margin-top:14px;margin-bottom:0;">Enter this code on your computer to pair.</p>
-    </div>
+    <p class="desc" id="statusDesc">Reaching SwingVision automatically…</p>
 
     <div id="stepPaired" class="hidden">
       <button class="btn btn-emerald" id="enableMotionBtn">Enable Motion Sensors</button>
-      <button class="btn btn-outline" id="disconnectBtn" style="margin-top:10px;">Disconnect</button>
       <div class="readout" id="readout" style="display:none;">
         <div><b id="accMag">0.0</b><span>Accel (g)</span></div>
         <div><b id="rotMag">0.0</b><span>Rotation °/s</span></div>
@@ -103,140 +82,74 @@
   </div>
 
   <p class="footnote">
-    Motion sensor access requires this page to be opened over HTTPS (or from your paired computer's local server directly). If "Enable Motion Sensors" doesn't prompt for permission, see the SwingVision README for the HTTPS setup step.
+    Motion sensor access requires this page to be opened over HTTPS. If "Enable Motion Sensors" doesn't prompt for permission, make sure you scanned the QR code from the SwingVision site (not a plain http:// link).
   </p>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
 <script>
 const statusDot = document.getElementById("statusDot");
 const statusTitle = document.getElementById("statusTitle");
 const statusDesc = document.getElementById("statusDesc");
-const stepConnect = document.getElementById("stepConnect");
-const stepCode = document.getElementById("stepCode");
 const stepPaired = document.getElementById("stepPaired");
-const codeDisplay = document.getElementById("codeDisplay");
-const connectBtn = document.getElementById("connectBtn");
-const disconnectBtn = document.getElementById("disconnectBtn");
 const enableMotionBtn = document.getElementById("enableMotionBtn");
 const readout = document.getElementById("readout");
 const accMagEl = document.getElementById("accMag");
 const rotMagEl = document.getElementById("rotMag");
 const hzEl = document.getElementById("hz");
 
-const autoName = "iPhone-" + Math.floor(Math.random() * 900 + 100);
-
-let ws = null;
 let sampleCount = 0;
 let lastHzTime = performance.now();
+let pairChannel = null;
+let isPaired = false;
 
-function wsUrl() {
-  const proto = location.protocol === "https:" ? "wss://" : "ws://";
-  return proto + location.host;
+function fail(msg) {
+  statusDot.className = "status-dot";
+  statusDot.textContent = "⚠️";
+  statusTitle.textContent = "Couldn't connect";
+  statusDesc.textContent = msg;
+  console.error("[swingvision]", msg);
 }
 
-function showStep(step) {
-  stepConnect.classList.add("hidden");
-  stepCode.classList.add("hidden");
-  stepPaired.classList.add("hidden");
-  step.classList.remove("hidden");
-}
+const pairId = new URLSearchParams(location.search).get("pair");
+if (!pairId) {
+  fail("This page needs to be opened by scanning the QR code shown on the SwingVision site — open that on your computer first, click Connect, and scan with your Camera app.");
+} else if (!window.supabase || !window.SWINGVISION_SUPABASE_URL || window.SWINGVISION_SUPABASE_URL.includes("YOUR-PROJECT")) {
+  fail("Supabase isn't configured yet (supabase-config.js). Ask whoever set up this site to fill in their Supabase project URL and anon key.");
+} else {
+  const client = window.supabase.createClient(window.SWINGVISION_SUPABASE_URL, window.SWINGVISION_SUPABASE_ANON_KEY);
+  pairChannel = client.channel(`swingvision-${pairId}`, { config: { broadcast: { self: false } } });
 
-function doConnect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  if (location.protocol === "file:" || !location.host) {
-    statusDesc.textContent = "Open this page via its http(s):// address (from your computer's server), not as a local file.";
-    connectBtn.classList.remove("hidden");
-    return;
-  }
-  let socket;
-  try {
-    socket = new WebSocket(wsUrl());
-  } catch (err) {
-    statusDesc.textContent = "Couldn't open a connection — see browser console.";
-    console.error("[swingvision] WebSocket failed:", err);
-    return;
-  }
-  ws = socket;
-  statusDot.className = "status-dot connecting";
-  statusTitle.textContent = "Connecting…";
-  statusDesc.textContent = "Reaching your SwingVision server…";
-  connectBtn.disabled = true;
-
-  ws.addEventListener("open", () => {
-    ws.send(JSON.stringify({ type: "hello", role: "phone", name: autoName }));
-  });
-
-  ws.addEventListener("message", (evt) => {
-    const msg = JSON.parse(evt.data);
-    if (msg.type === "welcome") {
-      codeDisplay.textContent = msg.code;
-      const scannedCode = new URLSearchParams(location.search).get("code");
-      if (scannedCode) {
-        // opened via a scanned QR link — pair automatically, no typing needed
-        statusDot.className = "status-dot connecting";
-        statusTitle.textContent = "Pairing automatically…";
-        statusDesc.textContent = "";
-        showStep(stepCode);
-        ws.send(JSON.stringify({ type: "pair-with-code", code: scannedCode }));
-      } else {
-        statusDot.className = "status-dot connecting";
-        statusTitle.textContent = "Enter code on computer";
-        statusDesc.textContent = "Or tap Connect on your computer and scan its QR code instead.";
-        showStep(stepCode);
-      }
-    }
-    if (msg.type === "paired") {
+  pairChannel
+    .on("broadcast", { event: "paired" }, (msg) => {
+      isPaired = true;
       statusDot.className = "status-dot paired";
       statusDot.textContent = "🔗";
-      statusTitle.textContent = "Paired with " + msg.peerName;
+      statusTitle.textContent = "Paired with " + (msg.payload?.name || "your computer");
       statusDesc.textContent = "Tap below to enable motion sensors and start streaming swing data.";
-      showStep(stepPaired);
-    }
-    if (msg.type === "pair-failed") {
-      statusTitle.textContent = "Auto-pairing failed";
-      statusDesc.textContent = (msg.reason || "") + " Your own code is still shown below if you'd rather enter it manually on the computer.";
-    }
-    if (msg.type === "unpaired") {
-      statusDot.className = "status-dot";
-      statusDot.textContent = "📡";
-      statusTitle.textContent = "Not connected";
-      statusDesc.textContent = "Disconnected from computer. Tap Connect to get a new code.";
-      readout.style.display = "none";
-      showStep(stepConnect);
-      connectBtn.disabled = false; connectBtn.classList.remove("hidden");
-    }
-  });
+      stepPaired.classList.remove("hidden");
+    })
+    .subscribe((status, err) => {
+      if (status === "SUBSCRIBED") {
+        statusDesc.textContent = "Pairing…";
+        // announce ourselves — retry a few times in case the desktop's own
+        // subscribe hasn't fully landed yet
+        let attempts = 0;
+        const helloInterval = setInterval(() => {
+          if (isPaired || attempts >= 8) { clearInterval(helloInterval); return; }
+          pairChannel.send({ type: "broadcast", event: "phone-hello", payload: { name: "iPhone" } });
+          attempts++;
+        }, 700);
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        fail("Couldn't reach Supabase Realtime. Check your internet connection and try scanning again.");
+      }
+    });
 
-  ws.addEventListener("close", (ev) => {
-    statusDot.className = "status-dot";
-    statusDot.textContent = "📡";
-    statusTitle.textContent = "Not connected";
-    if (ev.code === 1006 || ev.code === 1015) {
-      // abnormal closure — almost always means it never actually reached a server
-      statusDesc.textContent = "Couldn't reach a SwingVision server at " + location.host +
-        ". Check: is `npm start` running on your computer, are you on the same WiFi, " +
-        "and did you open the localhost/ngrok address rather than the GitHub Pages link?";
-    } else {
-      statusDesc.textContent = "Disconnected (code " + ev.code + "). Tap Connect to try again.";
-    }
-    showStep(stepConnect);
-    connectBtn.disabled = false; connectBtn.classList.remove("hidden");
-    console.warn("[swingvision] phone WebSocket closed", ev.code, ev.reason, "url:", wsUrl());
-  });
-
-  ws.addEventListener("error", (err) => {
-    console.error("[swingvision] phone WebSocket error:", err, "url:", wsUrl());
-    // the 'close' event fires right after this with more useful detail (see above) —
-    // intentionally not overwriting statusDesc here so that message isn't lost.
+  window.addEventListener("pagehide", () => {
+    if (pairChannel) pairChannel.send({ type: "broadcast", event: "phone-left", payload: {} });
   });
 }
-
-// auto-connect as soon as the page loads — no tap required
-doConnect();
-connectBtn.addEventListener("click", doConnect);
-
-disconnectBtn.addEventListener("click", () => {
-  if (ws) { ws.send(JSON.stringify({ type: "unpair" })); ws.close(); }
-});
 
 enableMotionBtn.addEventListener("click", async () => {
   try {
@@ -257,9 +170,8 @@ enableMotionBtn.addEventListener("click", async () => {
 });
 
 function startMotionStream() {
-  motionEnabled = true;
   window.addEventListener("devicemotion", (e) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!pairChannel) return;
     const acc = e.accelerationIncludingGravity || e.acceleration || { x: 0, y: 0, z: 0 };
     const rot = e.rotationRate || { alpha: 0, beta: 0, gamma: 0 };
     const payload = {
@@ -267,7 +179,7 @@ function startMotionStream() {
       ra: round(rot.alpha), rb: round(rot.beta), rg: round(rot.gamma),
       interval: e.interval
     };
-    ws.send(JSON.stringify({ type: "motion", data: payload, t: Date.now() }));
+    pairChannel.send({ type: "broadcast", event: "motion", payload });
 
     const accMag = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2) / 9.81;
     const rotMag = Math.sqrt((rot.alpha||0)**2 + (rot.beta||0)**2 + (rot.gamma||0)**2);

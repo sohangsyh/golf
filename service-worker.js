@@ -12,6 +12,7 @@ const SHELL_FILES = [
   "./",
   "./index.html",
   "./phone.html",
+  "./supabase-config.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
@@ -45,9 +46,9 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
   const isSameOrigin = url.origin === self.location.origin;
-  const isLocalHelper = url.port === "8787"; // never cache local YouTube-clip helper calls
+  const isSupabase = url.hostname.endsWith(".supabase.co");
 
-  if (isLocalHelper) return; // let those go straight to network, no interception
+  if (isSupabase) return; // never cache/intercept realtime pairing traffic
 
   if (isSameOrigin) {
     // app shell: cache-first, so it opens instantly and works offline
