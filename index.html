@@ -226,7 +226,7 @@
     background:#f3f1ec;border-radius:14px;padding:14px;display:inline-flex;
     align-items:center;justify-content:center;min-width:200px;min-height:200px;
   }
-  .qr-canvas-wrap canvas{display:block;}
+  .qr-canvas-wrap canvas,.qr-canvas-wrap img,.qr-canvas-wrap table{display:block;}
   .qr-code-text{
     margin-top:16px;font-family:'Playfair Display',serif;font-size:22px;letter-spacing:6px;
     color:var(--gold-bright);
@@ -366,13 +366,13 @@
     <button class="qr-close" id="qrCloseBtn" aria-label="Close">×</button>
     <div class="qr-title">Scan with your iPhone</div>
     <p class="qr-sub">Open Camera and point it at this code — it'll open Safari and pair automatically.</p>
-    <div class="qr-canvas-wrap"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
+    <div class="qr-canvas-wrap"><div id="qrCanvas"></div></div>
     <button class="btn btn-outline" id="qrCopyLinkBtn" style="margin-top:14px;">Copy Link Instead</button>
     <div class="qr-status" id="qrStatus">Waiting for phone to scan…</div>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
 <script type="module">
@@ -622,12 +622,23 @@ function openPairingChannel(client) {
   qrStatus.classList.remove("paired");
   sensorSub.textContent = "Waiting for phone…";
 
-  if (window.QRCode && window.QRCode.toCanvas) {
-    window.QRCode.toCanvas(qrCanvas, phoneUrl, { width: 200, margin: 1, color: { dark: "#0d0f12", light: "#f3f1ecff" } }, (err) => {
-      if (err) console.error("[swingvision] QR render failed:", err);
-    });
+  qrCanvas.innerHTML = ""; // clear any previous code before drawing a fresh one
+  if (window.QRCode) {
+    try {
+      new window.QRCode(qrCanvas, {
+        text: phoneUrl,
+        width: 200,
+        height: 200,
+        colorDark: "#0d0f12",
+        colorLight: "#f3f1ec",
+        correctLevel: window.QRCode.CorrectLevel.M
+      });
+    } catch (err) {
+      console.error("[swingvision] QR render failed:", err);
+    }
   } else {
     console.error("[swingvision] QR library not loaded — link:", phoneUrl);
+    qrStatus.textContent = "QR code couldn't load — use Copy Link Instead below.";
   }
   qrCopyLinkBtn.onclick = () => {
     navigator.clipboard?.writeText(phoneUrl).then(
