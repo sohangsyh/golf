@@ -5,8 +5,8 @@
 // they don't need to be re-downloaded on every load, but a first run still
 // needs an internet connection.
 
-const SHELL_CACHE = "swingvision-shell-v1";
-const RUNTIME_CACHE = "swingvision-runtime-v1";
+const SHELL_CACHE = "swingvision-shell-v2";
+const RUNTIME_CACHE = "swingvision-runtime-v2";
 
 const SHELL_FILES = [
   "./",
