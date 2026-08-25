@@ -25,8 +25,7 @@
     min-height:100vh; padding:28px 20px 40px; padding-top:max(28px, env(safe-area-inset-top));
   }
   .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
-  .brand-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--gold-bright),var(--emerald));
-    display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-weight:700;color:#07080a;font-size:16px;}
+  .brand-mark{width:34px;height:34px;border-radius:9px;display:block;}
   .brand-text{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;}
   .brand-text span{color:var(--gold-bright);}
   .subtitle{font-size:12px;color:var(--text-lo);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:34px;margin-top:2px;}
@@ -63,7 +62,7 @@
 </style>
 </head>
 <body>
-  <div class="brand"><div class="brand-mark">S</div><div class="brand-text">SWING<span>VISION</span></div></div>
+  <div class="brand"><img class="brand-mark" src="logo-header.png" alt="SwingVision" /><div class="brand-text">SWING<span>VISION</span></div></div>
   <div class="subtitle">Club Sensor Mode</div>
 
   <div class="card">

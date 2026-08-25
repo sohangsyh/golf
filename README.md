@@ -42,6 +42,26 @@ out of the box on any channel name.
    Sensors** on the phone once (accept the permission prompt) and you'll see live
    accelerometer/rotation numbers on both screens.
 
+## Taking a swing
+Stand in the dashed box shown on the camera view, holding your club (or your
+phone, if that's standing in for one) with both hands. Hold still for about a
+second and SwingVision counts down 3-2-1-GO! and starts recording automatically
+— no need to click Record yourself, though the button's still there if you'd
+rather trigger it manually.
+
+While recording, a gold swing path is drawn live over your skeleton and baked
+into a downloadable video of the swing. Use the **Swing Path** button to turn
+that overlay on or off.
+
+After the swing, alongside the pose-matching score you'll see estimated Swing
+Speed, Club Speed, Club Path, Attack Angle, and Face Angle. Speed and Face Angle
+come from your phone's Club Sensor (connect it first for those to show); Club
+Path and Attack Angle come from the camera. All of these are rough, illustrative
+estimates useful for comparing one swing to the next at home — not numbers from
+a calibrated launch monitor. Impact Location isn't shown, since measuring where
+on the clubface you struck the ball needs a sensor mounted on the club itself,
+which nothing here provides.
+
 Your phone and computer don't even need to be on the same WiFi — both just need an
 internet connection, since pairing now happens through Supabase's servers rather than
 a local network connection.

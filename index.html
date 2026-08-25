@@ -60,9 +60,7 @@
   .brand{display:flex;align-items:center;gap:14px;}
   .brand-mark{
     width:38px;height:38px;border-radius:10px;
-    background:linear-gradient(135deg,var(--gold-bright),var(--emerald));
-    display:flex;align-items:center;justify-content:center;
-    font-family:'Playfair Display',serif;font-weight:700;color:#07080a;font-size:18px;
+    display:block;
     box-shadow:0 0 24px rgba(201,163,92,0.35);
   }
   .brand-text{font-family:'Playfair Display',serif;font-size:22px;letter-spacing:0.5px;font-weight:600;}
@@ -127,6 +125,35 @@
   .btn-outline:hover{border-color:var(--gold);color:var(--gold-bright);}
   .btn-danger{background:linear-gradient(135deg,#d97a63,#a8402c);color:#fff;}
   .btn:disabled{opacity:.35;cursor:not-allowed;}
+
+  .address-zone{
+    position:absolute; left:26%; right:26%; top:14%; bottom:10%;
+    border:2px dashed rgba(230,199,137,.55); border-radius:16px;
+    display:flex; align-items:flex-end; justify-content:center; padding-bottom:10px;
+    pointer-events:none; transition:.25s; z-index:5;
+  }
+  .address-zone span{
+    font-size:11px; color:var(--gold-bright); background:rgba(7,8,10,.6);
+    padding:5px 12px; border-radius:20px; text-align:center; letter-spacing:.3px;
+  }
+  .address-zone.ready{border-color:var(--emerald-bright); box-shadow:0 0 34px rgba(46,156,120,.3) inset;}
+  .address-zone.ready span{color:var(--emerald-bright);}
+
+  .countdown-overlay{
+    position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+    background:rgba(3,4,5,.4); backdrop-filter:blur(2px);
+  }
+  .countdown-overlay span{
+    font-family:'Playfair Display',serif; font-size:min(22vw,120px); font-weight:700;
+    color:var(--gold-bright); text-shadow:0 0 40px rgba(230,199,137,.6);
+    animation:countPop .8s ease both;
+  }
+  @keyframes countPop{0%{transform:scale(.35);opacity:0;}35%{transform:scale(1.15);opacity:1;}100%{transform:scale(1);opacity:1;}}
+
+  .swing-metrics{margin-top:18px;display:grid;grid-template-columns:repeat(3,1fr);gap:9px;}
+  .swing-metrics div{background:rgba(255,255,255,.03);border:1px solid var(--panel-border);border-radius:10px;padding:10px 6px;text-align:center;}
+  .swing-metrics b{display:block;font-family:'Playfair Display',serif;font-size:16px;color:var(--gold-bright);}
+  .swing-metrics span{font-size:9px;color:var(--text-lo);text-transform:uppercase;letter-spacing:.5px;}
 
   .cam-controls{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap;align-items:center;}
   .rec-indicator{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--danger);margin-left:auto;opacity:0;transition:.2s;}
@@ -250,7 +277,7 @@
 
 <header>
   <div class="brand">
-    <div class="brand-mark">S</div>
+    <img class="brand-mark" src="logo-header.png" alt="SwingVision" />
     <div>
       <div class="brand-text">SWING<span>VISION</span></div>
       <div class="tagline">AI Golf Pose Trainer</div>
@@ -275,11 +302,16 @@
         <div>Enable your camera to begin skeleton tracking.<br/>Stand side-on, full body in frame.</div>
         <button class="btn btn-gold" id="startCamBtn">Enable Camera</button>
       </div>
+      <div class="address-zone" id="addressZone">
+        <span>Stand here holding your club/phone with both hands — hold still to start</span>
+      </div>
+      <div class="countdown-overlay hidden" id="countdownOverlay"><span id="countdownNum">3</span></div>
     </div>
 
     <div class="cam-controls">
       <button class="btn btn-gold" id="recordBtn" disabled>● Record Swing</button>
       <button class="btn btn-danger" id="stopBtn" style="display:none;">■ Stop</button>
+      <button class="btn btn-outline" id="pathToggleBtn">Swing Path: On</button>
       <button class="btn btn-outline" id="resetBtn">Reset Session</button>
       <div class="rec-indicator" id="recIndicator"><span class="rec-dot"></span>RECORDING</div>
     </div>
@@ -326,6 +358,19 @@
       </div>
 
       <ul class="advice-list" id="adviceList"></ul>
+
+      <div class="swing-metrics" id="swingMetrics" style="display:none;">
+        <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
+        <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
+        <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
+        <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
+        <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
+        <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
+      </div>
+      <p class="small-note" id="metricsNote" style="display:none;">
+        Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
+      </p>
+      <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
 
       <div class="metric-bars" id="metricBars"></div>
     </div>
@@ -701,6 +746,7 @@ function openPairingChannel(client) {
       phoneMsgCount++;
       const now = performance.now();
       if (now - phoneLastHz > 1000) { phHz.textContent = phoneMsgCount; phoneMsgCount = 0; phoneLastHz = now; }
+      if (window.capturingMotion) { window.motionBuffer.push({ t: performance.now(), ...d }); }
     })
     .on("broadcast", { event: "phone-left" }, () => {
       isPaired = false;
@@ -804,9 +850,68 @@ const video = document.getElementById("video");
 const overlay = document.getElementById("overlay");
 const octx = overlay.getContext("2d");
 const camHint = document.getElementById("camHint");
+const addressZone = document.getElementById("addressZone");
+const countdownOverlay = document.getElementById("countdownOverlay");
+const countdownNum = document.getElementById("countdownNum");
 let camRunning=false, lastVideoTime=-1;
 let liveBuffer=[]; // {t, landmarks}
 let recording=false;
+let lastLM=null;
+let pathTrail=[];
+let pathVisible=true;
+let addressHoldStart=null;
+let autoTriggering=false;
+window.capturingMotion=false;
+window.motionBuffer=[];
+
+// Normalized (0-1) bounds matching the .address-zone box drawn over the stage.
+const ADDRESS_ZONE = {xMin:0.26, xMax:0.74, yMin:0.14, yMax:0.90};
+
+document.getElementById("pathToggleBtn").addEventListener("click", (e)=>{
+  pathVisible = !pathVisible;
+  e.target.textContent = "Swing Path: " + (pathVisible ? "On" : "Off");
+});
+
+function checkAddressPosition(lm){
+  const lw = lm[L.lWrist], rw = lm[L.rWrist];
+  const midX = (lw.x+rw.x)/2, midY = (lw.y+rw.y)/2;
+  const handsTogether = Math.hypot(lw.x-rw.x, lw.y-rw.y) < 0.14;
+  const inZone = midX>ADDRESS_ZONE.xMin && midX<ADDRESS_ZONE.xMax && midY>ADDRESS_ZONE.yMin && midY<ADDRESS_ZONE.yMax;
+  return handsTogether && inZone;
+}
+
+// Approximates a "clubhead" point by extending past the wrists along the
+// forearm direction, so the drawn path sweeps further than just hand position.
+function clubProxy(lm){
+  const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
+  const elbowMid = {x:(lm[L.lElbow].x+lm[L.rElbow].x)/2, y:(lm[L.lElbow].y+lm[L.rElbow].y)/2};
+  const dx = wristMid.x-elbowMid.x, dy = wristMid.y-elbowMid.y;
+  return {x: wristMid.x+dx*2.0, y: wristMid.y+dy*2.0};
+}
+
+function drawSkeletonOn(ctx,w,h,landmarks){
+  ctx.lineWidth=3; ctx.strokeStyle="rgba(230,199,137,0.9)";
+  CONNECTIONS.forEach(([a,b])=>{
+    const pa=landmarks[a], pb=landmarks[b];
+    ctx.beginPath(); ctx.moveTo(pa.x*w,pa.y*h); ctx.lineTo(pb.x*w,pb.y*h); ctx.stroke();
+  });
+  ctx.fillStyle="#2e9c78";
+  landmarks.forEach(p=>{ ctx.beginPath(); ctx.arc(p.x*w,p.y*h,4,0,7); ctx.fill(); });
+}
+
+function drawPathTrail(ctx,w,h,trail){
+  if(trail.length<2) return;
+  for(let i=1;i<trail.length;i++){
+    const a=trail[i-1], b=trail[i];
+    const alpha = 0.15 + 0.85*(i/trail.length);
+    ctx.strokeStyle = `rgba(230,199,137,${alpha})`;
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(a.x*w,a.y*h); ctx.lineTo(b.x*w,b.y*h); ctx.stroke();
+  }
+  const last=trail[trail.length-1];
+  ctx.fillStyle="#e6c789";
+  ctx.beginPath(); ctx.arc(last.x*w,last.y*h,5,0,7); ctx.fill();
+}
 
 document.getElementById("startCamBtn").addEventListener("click", startCamera);
 async function startCamera(){
@@ -833,13 +938,27 @@ window.addEventListener("resize", fitOverlay);
 function drawLiveSkeleton(landmarks){
   const w=overlay.width, h=overlay.height;
   octx.clearRect(0,0,w,h);
-  octx.lineWidth=3; octx.strokeStyle="rgba(230,199,137,0.9)";
-  CONNECTIONS.forEach(([a,b])=>{
-    const pa=landmarks[a], pb=landmarks[b];
-    octx.beginPath(); octx.moveTo(pa.x*w,pa.y*h); octx.lineTo(pb.x*w,pb.y*h); octx.stroke();
-  });
-  octx.fillStyle="#2e9c78";
-  landmarks.forEach(p=>{ octx.beginPath(); octx.arc(p.x*w,p.y*h,4,0,7); octx.fill(); });
+  drawSkeletonOn(octx,w,h,landmarks);
+}
+
+function startCountdown(){
+  countdownOverlay.classList.remove("hidden");
+  const seq = ["3","2","1","GO!"];
+  let i=0;
+  function step(){
+    countdownNum.textContent = seq[i];
+    countdownNum.style.animation="none"; void countdownNum.offsetWidth; countdownNum.style.animation="";
+    i++;
+    if(i<seq.length){ setTimeout(step,800); }
+    else {
+      setTimeout(()=>{
+        countdownOverlay.classList.add("hidden");
+        autoTriggering=false;
+        beginRecording();
+      },700);
+    }
+  }
+  step();
 }
 
 function trackLoop(){
@@ -849,10 +968,30 @@ function trackLoop(){
     const result = poseLandmarker.detectForVideo(video, performance.now());
     if(result.landmarks && result.landmarks.length){
       const lm = result.landmarks[0];
+      lastLM = lm;
       drawLiveSkeleton(lm);
-      if(recording){ liveBuffer.push({t:performance.now(), landmarks:lm}); }
+      if(recording){
+        liveBuffer.push({t:performance.now(), landmarks:lm});
+        pathTrail.push(clubProxy(lm));
+      }
+      if(pathVisible && pathTrail.length>1){ drawPathTrail(octx, overlay.width, overlay.height, pathTrail); }
+      if(!recording && !autoTriggering){
+        if(checkAddressPosition(lm)){
+          addressZone.classList.add("ready");
+          if(addressHoldStart===null){ addressHoldStart = performance.now(); }
+          else if(performance.now()-addressHoldStart>1100){
+            autoTriggering=true;
+            addressZone.classList.remove("ready");
+            startCountdown();
+          }
+        } else {
+          addressHoldStart=null;
+          addressZone.classList.remove("ready");
+        }
+      }
     } else {
       octx.clearRect(0,0,overlay.width,overlay.height);
+      lastLM=null;
     }
   }
   requestAnimationFrame(trackLoop);
@@ -862,27 +1001,136 @@ function trackLoop(){
 const recordBtn = document.getElementById("recordBtn");
 const stopBtn = document.getElementById("stopBtn");
 const recIndicator = document.getElementById("recIndicator");
+const downloadSwingLink = document.getElementById("downloadSwingLink");
 
-recordBtn.addEventListener("click",()=>{
-  liveBuffer=[]; recording=true;
+/* ---------------- Video capture: composite the mirrored camera frame + skeleton
+ * + swing path onto an offscreen canvas each frame while recording, and record
+ * that canvas's stream with MediaRecorder — so the path is baked into the file. */
+const recCanvas = document.createElement("canvas");
+const rctx = recCanvas.getContext("2d");
+let mediaRecorder=null, recordedChunks=[], recDrawing=false, lastSwingVideoUrl=null;
+
+function pickMime(){
+  const cands = ["video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"];
+  for(const c of cands){ if(window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c; }
+  return "";
+}
+
+function recordFrameLoop(){
+  if(!recDrawing) return;
+  const w = recCanvas.width, h = recCanvas.height;
+  rctx.clearRect(0,0,w,h);
+  rctx.save();
+  rctx.translate(w,0); rctx.scale(-1,1); // mirror to match the live selfie-style view
+  rctx.drawImage(video,0,0,w,h);
+  if(lastLM) drawSkeletonOn(rctx,w,h,lastLM);
+  if(pathVisible && pathTrail.length>1) drawPathTrail(rctx,w,h,pathTrail);
+  rctx.restore();
+  requestAnimationFrame(recordFrameLoop);
+}
+
+function beginRecording(){
+  liveBuffer=[]; pathTrail=[]; window.motionBuffer=[]; window.capturingMotion=true;
+  recording=true;
   recordBtn.style.display="none"; stopBtn.style.display="inline-block";
   recIndicator.classList.add("on");
   document.getElementById("results").style.display="none";
+  downloadSwingLink.style.display="none";
   resetPhaseTrack();
-});
-stopBtn.addEventListener("click",()=>{
-  recording=false;
+
+  const rect = video.getBoundingClientRect();
+  recCanvas.width = video.videoWidth || Math.round(rect.width) || 640;
+  recCanvas.height = video.videoHeight || Math.round(rect.height) || 480;
+  recordedChunks=[];
+  recDrawing=true;
+  requestAnimationFrame(recordFrameLoop);
+  try{
+    const mime = pickMime();
+    const stream = recCanvas.captureStream(30);
+    mediaRecorder = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size>0) recordedChunks.push(e.data); };
+    mediaRecorder.start();
+  }catch(e){
+    console.warn("[swingvision] video recording unavailable:", e);
+    mediaRecorder=null;
+  }
+}
+
+function endRecording(){
+  recording=false; window.capturingMotion=false;
   recordBtn.style.display="inline-block"; stopBtn.style.display="none";
   recIndicator.classList.remove("on");
+  recDrawing=false;
+
+  if(mediaRecorder && mediaRecorder.state!=="inactive"){
+    mediaRecorder.onstop = ()=>{
+      if(recordedChunks.length){
+        const blob = new Blob(recordedChunks, {type: recordedChunks[0].type || "video/webm"});
+        if(lastSwingVideoUrl) URL.revokeObjectURL(lastSwingVideoUrl);
+        lastSwingVideoUrl = URL.createObjectURL(blob);
+        downloadSwingLink.href = lastSwingVideoUrl;
+        downloadSwingLink.download = `swingvision-${currentShot}-${Date.now()}.webm`;
+        downloadSwingLink.style.display = "inline-block";
+      }
+    };
+    try{ mediaRecorder.stop(); }catch(e){}
+  }
+
   if(liveBuffer.length<8){
     alert("Recording too short — capture your full swing motion, then stop.");
     return;
   }
   analyzeAndScore(liveBuffer, currentShot);
-});
+}
+
+recordBtn.addEventListener("click", beginRecording);
+stopBtn.addEventListener("click", endRecording);
 document.getElementById("resetBtn").addEventListener("click",()=>{
-  liveBuffer=[]; document.getElementById("results").style.display="none"; resetPhaseTrack();
+  liveBuffer=[]; pathTrail=[];
+  document.getElementById("results").style.display="none";
+  downloadSwingLink.style.display="none";
+  resetPhaseTrack();
 });
+
+// Estimates the six swing metrics. Club Path / Attack Angle come from the
+// camera's wrist-path around impact (2D, so treat as a relative trend rather
+// than a precise number). Swing/Club Speed and Face Angle come from the phone
+// Club Sensor's accelerometer/gyroscope when one is connected, using simple
+// illustrative calibration constants — not a lab-calibrated launch monitor.
+// Impact Location genuinely needs a clubface-mounted sensor, so it's reported
+// as not available rather than guessed.
+function computeSensorMetrics(buffer, motion){
+  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+  const n = buffer.length;
+  let topIdx=0, minY=Infinity;
+  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
+  let impactIdx=topIdx, bestDelta=-Infinity;
+  for(let i=topIdx+1;i<n;i++){ const d=wristY[i]-wristY[i-1]; if(d>bestDelta){bestDelta=d; impactIdx=i;} }
+  const winStart = Math.max(topIdx, impactIdx-3), winEnd = Math.min(n-1, impactIdx+3);
+  const wristMidAt = i => ({x:(buffer[i].landmarks[L.lWrist].x+buffer[i].landmarks[L.rWrist].x)/2, y:(buffer[i].landmarks[L.lWrist].y+buffer[i].landmarks[L.rWrist].y)/2});
+  const p0 = wristMidAt(winStart), p1 = wristMidAt(winEnd);
+  const dx = p1.x-p0.x, dy = p1.y-p0.y;
+  const attackAngleDeg = Math.round(Math.atan2(-dy, Math.max(Math.abs(dx),0.0001))*180/Math.PI - 90);
+
+  const sh = buffer[impactIdx].landmarks;
+  const shoulderW = Math.hypot(sh[L.lShoulder].x-sh[L.rShoulder].x, sh[L.lShoulder].y-sh[L.rShoulder].y) || 0.2;
+  const clubPathDeg = Math.max(-12, Math.min(12, Math.round((dx/shoulderW)*10)));
+
+  let swingSpeedMph=null, clubSpeedMph=null, faceAngleDeg=null;
+  if(motion && motion.length>4){
+    let peakAcc=0;
+    motion.forEach(m=>{ const g=Math.sqrt((m.ax||0)**2+(m.ay||0)**2+(m.az||0)**2)/9.81; if(g>peakAcc) peakAcc=g; });
+    swingSpeedMph = Math.round(peakAcc*11);
+    clubSpeedMph = Math.round(swingSpeedMph*1.35);
+    let rotSum=0;
+    for(let i=1;i<motion.length;i++){
+      const dt = Math.max(0.001,(motion[i].t-motion[i-1].t)/1000);
+      rotSum += (motion[i].rb||0)*dt;
+    }
+    faceAngleDeg = Math.max(-15, Math.min(15, Math.round(rotSum/8)));
+  }
+  return { swingSpeedMph, clubSpeedMph, clubPathDeg, attackAngleDeg, faceAngleDeg };
+}
 
 function resetPhaseTrack(){
   document.querySelectorAll(".phase-step").forEach(s=>s.classList.remove("active","done"));
@@ -939,11 +1187,12 @@ function analyzeAndScore(buffer, shot){
 
   const overall = Math.round(totalScore/count);
   deviations.sort((a,b)=>b.absDiff-a.absDiff);
+  const sensorMetrics = computeSensorMetrics(buffer, window.motionBuffer);
 
-  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData), PHASES.length*180+150);
+  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData, sensorMetrics), PHASES.length*180+150);
 }
 
-function renderResults(overall, topDeviations, barData){
+function renderResults(overall, topDeviations, barData, sensorMetrics){
   const results = document.getElementById("results");
   results.style.display="block";
   const circle = document.getElementById("scoreCircle");
@@ -985,6 +1234,17 @@ function renderResults(overall, topDeviations, barData){
     row.innerHTML = `<div>${b.label}</div><div class="metric-bar-track"><div class="metric-bar-fill" style="width:${b.score}%"></div></div><div>${b.score}%</div>`;
     bars.appendChild(row);
   });
+
+  const sm = sensorMetrics || {};
+  document.getElementById("swingMetrics").style.display="grid";
+  document.getElementById("metricsNote").style.display="block";
+  const fmt = (v, unit) => v==null ? "—" : (v>0?"+":"")+v+(unit||"");
+  document.getElementById("mSwingSpeed").textContent = sm.swingSpeedMph!=null ? sm.swingSpeedMph : "—";
+  document.getElementById("mClubSpeed").textContent = sm.clubSpeedMph!=null ? sm.clubSpeedMph : "—";
+  document.getElementById("mClubPath").textContent = fmt(sm.clubPathDeg);
+  document.getElementById("mAttackAngle").textContent = fmt(sm.attackAngleDeg);
+  document.getElementById("mFaceAngle").textContent = fmt(sm.faceAngleDeg);
+  document.getElementById("mImpactLoc").textContent = "N/A";
 }
 
 /* ---------------- Upload own gesture ---------------- */

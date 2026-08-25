@@ -5,8 +5,8 @@
 // they don't need to be re-downloaded on every load, but a first run still
 // needs an internet connection.
 
-const SHELL_CACHE = "swingvision-shell-v2";
-const RUNTIME_CACHE = "swingvision-runtime-v2";
+const SHELL_CACHE = "swingvision-shell-v3";
+const RUNTIME_CACHE = "swingvision-runtime-v3";
 
 const SHELL_FILES = [
   "./",
@@ -17,7 +17,8 @@ const SHELL_FILES = [
   "./icon-192.png",
   "./icon-512.png",
   "./icon-512-maskable.png",
-  "./apple-touch-icon.png"
+  "./apple-touch-icon.png",
+  "./logo-header.png"
 ];
 
 self.addEventListener("install", (event) => {
