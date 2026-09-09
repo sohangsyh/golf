@@ -190,12 +190,18 @@
   }
   .ghost-wrap video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
   .ghost-wrap canvas{position:absolute;inset:0;width:100%;height:100%;}
+  /* Right-Handed mode mirrors the reference clip (and its skeleton overlay
+     together, so they stay in sync) — same trick the live camera uses for
+     its selfie view: flip the display, leave the underlying landmark math
+     untouched. */
+  .ghost-wrap.mirrored video, .ghost-wrap.mirrored canvas{transform:scaleX(-1);}
   .ghost-label{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-bright);opacity:.85;z-index:2;}
   .ghost-source{position:absolute;bottom:12px;left:14px;font-size:10.5px;color:var(--text-hi);background:rgba(7,8,10,.55);padding:3px 9px;border-radius:20px;z-index:2;}
 
   .ghost-controls{display:flex;gap:10px;margin-top:14px;}
   .ghost-toggle{flex:1;opacity:.5;}
   .ghost-toggle.on{opacity:1;border-color:var(--gold);color:var(--gold-bright);background:rgba(201,163,92,.1);}
+  #handedToggleBtn{flex:1;}
 
   .upload-row{display:flex;gap:10px;margin-top:16px;}
   .upload-row input[type=file]{display:none;}
@@ -396,6 +402,7 @@
     <div class="ghost-controls">
       <button class="btn btn-outline ghost-toggle on" id="toggleGhostVideo">Video</button>
       <button class="btn btn-outline ghost-toggle on" id="toggleGhostSkeleton">Skeleton</button>
+      <button class="btn btn-outline" id="handedToggleBtn">🫲 Left-Handed</button>
     </div>
 
     <div class="upload-row">
@@ -672,6 +679,28 @@ toggleGhostSkeletonBtn.addEventListener("click", ()=>{
   updateGhostToggleUI();
 });
 updateGhostToggleUI();
+
+// Left-Handed / Right-Handed: the bundled reference clips demonstrate a
+// swing toward screen-right, which is the natural orientation for a
+// left-handed player to copy directly. Right-Handed mode mirrors the
+// reference video (and its skeleton overlay, together, via CSS — see
+// .ghost-wrap.mirrored) so a right-handed player sees a swing that matches
+// their own natural direction instead of having to mentally flip it.
+let playerHanded = "left";
+try{ playerHanded = localStorage.getItem("swingvision-handed") || "left"; }catch(e){}
+const handedToggleBtn = document.getElementById("handedToggleBtn");
+const ghostWrap = document.querySelector(".ghost-wrap");
+function updateHandedUI(){
+  const isRight = playerHanded === "right";
+  ghostWrap.classList.toggle("mirrored", isRight);
+  handedToggleBtn.textContent = isRight ? "🫱 Right-Handed" : "🫲 Left-Handed";
+}
+handedToggleBtn.addEventListener("click", ()=>{
+  playerHanded = playerHanded==="right" ? "left" : "right";
+  try{ localStorage.setItem("swingvision-handed", playerHanded); }catch(e){}
+  updateHandedUI();
+});
+updateHandedUI();
 
 function ghostLoop(){
   const w=ghostOverlay.width, h=ghostOverlay.height;
@@ -1033,6 +1062,7 @@ let matchCompareUserT0=0, matchCompareUserDur=1600;
 let matchComparePhaseTimes=null;
 let matchCompareUserBounds=null, matchCompareRefBounds=null;
 let matchCompareMirrorUser=false;
+let matchCompareMirrorRef=false; // mirrors the reference too, when Right-Handed mode is on
 let matchComparePathTransform=null;
 let matchCompareLoopStart=0, matchCompareCycleMs=1600;
 
@@ -1043,6 +1073,7 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   matchCompareUserPhasesFallback = userPhasesLM;
   matchCompareUserBounds = null; matchCompareRefBounds = null;
   matchCompareMirrorUser = false;
+  matchCompareMirrorRef = playerHanded === "right";
   matchComparePathTransform = null;
 
   // phase timing first (both address/top landmarks and phase boundaries come
@@ -1062,15 +1093,23 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
     matchCompareRefBounds = phaseBoundaries(matchCompareRefBuf, refPhaseTimes);
   }
 
-  // orientation/handedness check
+  // orientation/handedness check. The reference itself may be getting
+  // mirrored for display (Right-Handed mode) — the direction check needs to
+  // use that SAME effective orientation, not the raw stored one, so the
+  // user's skeleton ends up matched to whatever the player is actually
+  // looking at.
   const userAddressLM = matchCompareUserBuf ? matchCompareUserBuf[0].landmarks : (userPhasesLM && userPhasesLM.address);
-  const refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
+  let refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
   const userTopLM = matchCompareUserBuf && matchComparePhaseTimes
     ? (nearestFrame(matchCompareUserBuf, matchComparePhaseTimes.top) || {}).landmarks
     : (userPhasesLM && userPhasesLM.top);
-  const refTopLM = matchCompareRefBuf && refPhaseTimes
+  let refTopLM = matchCompareRefBuf && refPhaseTimes
     ? (nearestFrame(matchCompareRefBuf, refPhaseTimes.top) || {}).landmarks
     : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].top);
+  if(matchCompareMirrorRef){
+    if(refAddressLM) refAddressLM = mirrorLandmarks(refAddressLM);
+    if(refTopLM) refTopLM = mirrorLandmarks(refTopLM);
+  }
 
   const userDir = swingDirection(userAddressLM, userTopLM);
   const refDir = swingDirection(refAddressLM, refTopLM);
@@ -1146,7 +1185,8 @@ function matchCompareLoop(){
     }
 
     if(refLM){
-      const refNorm = normalizeForCompare(refLM, 0.5, 0.55, 0.22);
+      const refForDraw = matchCompareMirrorRef ? mirrorLandmarks(refLM) : refLM;
+      const refNorm = normalizeForCompare(refForDraw, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, refNorm, "rgba(46,156,120,0.85)", "#2e9c78");
     }
     if(userLM){

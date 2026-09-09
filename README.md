@@ -116,12 +116,22 @@ motion — its underlying math (turning acceleration into a position) was
 tuned with time constants slower than a golf swing itself, so the path was
 always trailing behind by close to a second. Sped that up considerably.
 
-SwingVision also now detects swing direction/handedness: it checks which
-screen-direction your hands actually travel on the backswing versus the
-reference clip's, and mirrors your skeleton (and swing path) in the results
-comparison if they don't match — so a reference video demonstrating a swing
-toward one side still compares correctly whether you swing left- or
-right-handed, instead of showing what looks like an opposite-handed swing.
+## Left-Handed / Right-Handed
+
+The bundled reference clips demonstrate a swing toward screen-right, which
+is the natural orientation for a left-handed player to copy directly. Next
+to the Video/Skeleton toggles under the Standard Gesture panel there's now a
+**Left-Handed / Right-Handed** button — switch it to Right-Handed and the
+reference clip (and its skeleton overlay, together) flips to show a swing
+toward screen-left instead, so a right-handed player has a natural direction
+to copy rather than having to mentally mirror it. Your choice is remembered
+for next time.
+
+The results comparison automatically follows whichever mode is selected: it
+checks which screen-direction your hands actually travel on the backswing
+versus the reference's (now-possibly-mirrored) direction, and flips your
+skeleton and swing path to match if needed — so the comparison always reads
+as the same movement, whichever handedness mode you're in.
 
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:
