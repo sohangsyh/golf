@@ -5,8 +5,8 @@
 // they don't need to be re-downloaded on every load, but a first run still
 // needs an internet connection.
 
-const SHELL_CACHE = "swingvision-shell-v16";
-const RUNTIME_CACHE = "swingvision-runtime-v16";
+const SHELL_CACHE = "swingvision-shell-v17";
+const RUNTIME_CACHE = "swingvision-runtime-v17";
 
 // Note: the standard-*.mp4 reference clips are deliberately NOT in this list —
 // they're a few MB each, and a failed/slow fetch for any one of them would

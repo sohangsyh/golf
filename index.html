@@ -291,6 +291,7 @@
   .match-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
   .match-legend .dot.you{background:#e6c789;}
   .match-legend .dot.ref{margin-left:10px;background:#2e9c78;}
+  .match-legend .dot.path{margin-left:10px;background:#ff2d2d;}
   .match-advice-col{display:flex;flex-direction:column;min-height:0;}
   .match-col-title{font-family:'Playfair Display',serif;font-size:13px;color:var(--text-mid);margin-bottom:10px;}
   .match-advice-col .advice-list{margin-top:0;flex:1;overflow-y:auto;max-height:100%;}
@@ -448,7 +449,7 @@
       <div class="match-compare-wrap">
         <canvas id="matchCompareCanvas"></canvas>
         <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
-        <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference</div>
+        <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference<span class="dot path"></span>Swing Path</div>
       </div>
       <div class="match-advice-col">
         <div class="match-col-title">Coaching Notes</div>
@@ -585,8 +586,15 @@ const fullPoseBuffers = {swing:null, putting:null, chip:null};
 const referencePhaseLandmarks = {swing:null, putting:null, chip:null};
 
 let currentShot = "swing";
+const SHOT_LABELS = {swing:"Swing", putting:"Putting", chip:"Chip Shot"};
 
 /* ---------------- UI wiring ---------------- */
+function updateRecordBtnLabel(){
+  const recordBtnEl = document.getElementById("recordBtn");
+  if(recordBtnEl && recordBtnEl.style.display !== "none"){
+    recordBtnEl.textContent = "● Record " + SHOT_LABELS[currentShot];
+  }
+}
 document.querySelectorAll(".shot-tab").forEach(tab=>{
   tab.addEventListener("click",()=>{
     document.querySelectorAll(".shot-tab").forEach(t=>t.classList.remove("active"));
@@ -595,6 +603,7 @@ document.querySelectorAll(".shot-tab").forEach(tab=>{
     document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Reference video";
     loadGhostVideo(currentShot);
     resetPhaseTrack();
+    updateRecordBtnLabel();
   });
 });
 
@@ -966,6 +975,34 @@ function mapPhaseTime(t, srcBounds, dstBounds){
   return dstBounds[dstBounds.length-1];
 }
 
+// The live camera is shown mirrored (a selfie view, so it feels natural
+// while you're swinging), but the raw landmarks recorded from it are NOT
+// mirrored — they're in the camera's true left/right, same as the reference
+// videos. In principle that already lines the two up. In practice, though,
+// whether a given reference clip's own left/right ends up matching depends
+// on how it was originally filmed (a phone's front camera often saves a
+// "selfie" video already mirrored). Rather than assume, we check: compare
+// which way each skeleton's shoulders point at address, and if the two
+// disagree, mirror the user's skeleton (and its swing path) so they overlay
+// correctly instead of looking like opposite-handed swings.
+function mirrorLandmarks(lm){ return lm.map(p=>({x:1-p.x, y:p.y, z:p.z, visibility:p.visibility})); }
+function shoulderOrientation(lm){ return Math.sign(lm[L.rShoulder].x - lm[L.lShoulder].x) || 1; }
+
+// A FIXED (not per-frame) recentre/rescale transform, computed once from the
+// address pose, for drawing the swing path — the path needs to stay put in
+// one stable reference frame to show its actual shape; if it were
+// re-centered on the body every frame (like the skeleton is) the arc would
+// warp and smear instead of reading as a path.
+function computeFixedTransform(landmarks){
+  const hipMid = {x:(landmarks[L.lHip].x+landmarks[L.rHip].x)/2, y:(landmarks[L.lHip].y+landmarks[L.rHip].y)/2};
+  const shMid = {x:(landmarks[L.lShoulder].x+landmarks[L.rShoulder].x)/2, y:(landmarks[L.lShoulder].y+landmarks[L.rShoulder].y)/2};
+  const torsoLen = Math.hypot(shMid.x-hipMid.x, shMid.y-hipMid.y) || 0.2;
+  return {hipMid, scale: 0.22/torsoLen};
+}
+function applyFixedTransform(p, tf, cx, cy){
+  return {x: cx+(p.x-tf.hipMid.x)*tf.scale, y: cy+(p.y-tf.hipMid.y)*tf.scale};
+}
+
 // The comparison animation plays back the FULL recorded swing frame by
 // frame (not just 4 static address/top/impact/finish poses stitched
 // together), driven by your own real swing's timeline on a loop. The
@@ -977,6 +1014,8 @@ let matchCompareUserPhasesFallback=null; // used only if a full buffer isn't ava
 let matchCompareUserT0=0, matchCompareUserDur=1600;
 let matchComparePhaseTimes=null;
 let matchCompareUserBounds=null, matchCompareRefBounds=null;
+let matchCompareMirrorUser=false;
+let matchComparePathTransform=null;
 let matchCompareLoopStart=0, matchCompareCycleMs=1600;
 
 function startMatchCompare(userBuffer, shot, userPhasesLM){
@@ -985,6 +1024,18 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   matchCompareShot = shot;
   matchCompareUserPhasesFallback = userPhasesLM;
   matchCompareUserBounds = null; matchCompareRefBounds = null;
+  matchCompareMirrorUser = false;
+  matchComparePathTransform = null;
+
+  // orientation check, using each buffer's own address (first) frame
+  const userAddressLM = matchCompareUserBuf ? matchCompareUserBuf[0].landmarks : (userPhasesLM && userPhasesLM.address);
+  const refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
+  if(userAddressLM && refAddressLM){
+    matchCompareMirrorUser = shoulderOrientation(userAddressLM) !== shoulderOrientation(refAddressLM);
+  }
+  if(userAddressLM){
+    matchComparePathTransform = computeFixedTransform(matchCompareMirrorUser ? mirrorLandmarks(userAddressLM) : userAddressLM);
+  }
 
   if(matchCompareUserBuf){
     matchCompareUserT0 = matchCompareUserBuf[0].t;
@@ -1046,12 +1097,25 @@ function matchCompareLoop(){
     }
 
     document.getElementById("matchPhaseLabel").textContent = labelPhase;
+
+    // swing path first (underneath), so the skeletons stay readable on top —
+    // it's drawn from the same recording that just finished, transformed
+    // into the same fixed, address-anchored frame the skeletons use
+    if(matchComparePathTransform && displayPathTrail && displayPathTrail.length>1){
+      const trail = displayPathTrail.map(pt=>{
+        const mp = matchCompareMirrorUser ? {x:1-pt.x, y:pt.y} : pt;
+        return applyFixedTransform(mp, matchComparePathTransform, 0.5, 0.55);
+      });
+      drawPathTrail(matchCompareCtx, w, h, trail);
+    }
+
     if(refLM){
       const refNorm = normalizeForCompare(refLM, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, refNorm, "rgba(46,156,120,0.85)", "#2e9c78");
     }
     if(userLM){
-      const userNorm = normalizeForCompare(userLM, 0.5, 0.55, 0.22);
+      const userForDraw = matchCompareMirrorUser ? mirrorLandmarks(userLM) : userLM;
+      const userNorm = normalizeForCompare(userForDraw, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, userNorm, "rgba(230,199,137,0.9)", "#e6c789");
     }
   }
@@ -1517,6 +1581,7 @@ function endRecording(){
   if(!recording) return; // guard against auto-stop and the manual Stop button both firing
   recording=false; window.capturingMotion=false;
   recordBtn.style.display="inline-block"; stopBtn.style.display="none";
+  updateRecordBtnLabel();
   recIndicator.classList.remove("on");
   recDrawing=false;
 

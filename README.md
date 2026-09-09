@@ -102,6 +102,20 @@ address zone (which is normal — that's where you just were) won't silently
 start a new countdown and yank the popup away — auto-recording only re-arms
 once you've closed the results.
 
+The results comparison also now shows your swing path (in red, same as the
+live view) laid over the skeletons, and auto-corrects a left/right mismatch:
+the live camera view is always shown mirrored (a selfie view, so it feels
+natural while swinging), but depending on how a given reference clip was
+originally filmed, its own left/right isn't guaranteed to line up with that.
+SwingVision checks the shoulder orientation of both skeletons at address and
+flips yours if needed, so the two always overlay as the same movement
+instead of looking like a mirror-image, opposite-handed swing.
+
+The **Record** button now says which shot it'll record and compare against —
+**Record Swing**, **Record Putting**, or **Record Chip Shot** — matching
+whichever tab (Swing / Putting / Chip Shot) is currently selected above the
+Standard Gesture panel.
+
 Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
 Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your
 phone's Club Sensor (connect it first for those to show); Club Path and Attack
