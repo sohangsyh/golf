@@ -5,9 +5,14 @@
 // they don't need to be re-downloaded on every load, but a first run still
 // needs an internet connection.
 
-const SHELL_CACHE = "swingvision-shell-v3";
-const RUNTIME_CACHE = "swingvision-runtime-v3";
+const SHELL_CACHE = "swingvision-shell-v4";
+const RUNTIME_CACHE = "swingvision-runtime-v4";
 
+// Note: the standard-*.mp4 reference clips are deliberately NOT in this list —
+// they're a few MB each, and a failed/slow fetch for any one of them would
+// fail cache.addAll() and block the whole app shell from installing. They're
+// cached lazily on first request instead (see the fetch handler below), which
+// still makes second-and-later loads fast without risking first install.
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -52,9 +57,18 @@ self.addEventListener("fetch", (event) => {
   if (isSupabase) return; // never cache/intercept realtime pairing traffic
 
   if (isSameOrigin) {
-    // app shell: cache-first, so it opens instantly and works offline
+    // app shell: cache-first, so it opens instantly and works offline. Anything
+    // not precached at install (e.g. the reference video clips) gets cached
+    // after its first successful fetch, so later loads are fast too.
     event.respondWith(
-      caches.match(req).then((cached) => cached || fetch(req))
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          const resClone = res.clone();
+          caches.open(SHELL_CACHE).then((cache) => cache.put(req, resClone)).catch(() => {});
+          return res;
+        });
+      })
     );
     return;
   }

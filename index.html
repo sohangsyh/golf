@@ -127,14 +127,16 @@
   .btn:disabled{opacity:.35;cursor:not-allowed;}
 
   .address-zone{
-    position:absolute; left:26%; right:26%; top:14%; bottom:10%;
-    border:2px dashed rgba(230,199,137,.55); border-radius:16px;
-    display:flex; align-items:flex-end; justify-content:center; padding-bottom:10px;
+    position:absolute; left:40%; right:40%; top:36%; bottom:38%;
+    border:2px dashed rgba(230,199,137,.55); border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
     pointer-events:none; transition:.25s; z-index:5;
   }
   .address-zone span{
-    font-size:11px; color:var(--gold-bright); background:rgba(7,8,10,.6);
+    position:absolute; top:100%; margin-top:8px; width:max-content; max-width:220px;
+    font-size:10.5px; color:var(--gold-bright); background:rgba(7,8,10,.65);
     padding:5px 12px; border-radius:20px; text-align:center; letter-spacing:.3px;
+    left:50%; transform:translateX(-50%);
   }
   .address-zone.ready{border-color:var(--emerald-bright); box-shadow:0 0 34px rgba(46,156,120,.3) inset;}
   .address-zone.ready span{color:var(--emerald-bright);}
@@ -303,7 +305,7 @@
         <button class="btn btn-gold" id="startCamBtn">Enable Camera</button>
       </div>
       <div class="address-zone" id="addressZone">
-        <span>Stand here holding your club/phone with both hands — hold still to start</span>
+        <span>Hold your club/phone with both hands here — hold still to start</span>
       </div>
       <div class="countdown-overlay hidden" id="countdownOverlay"><span id="countdownNum">3</span></div>
     </div>
@@ -537,7 +539,7 @@ document.querySelectorAll(".shot-tab").forEach(tab=>{
     document.querySelectorAll(".shot-tab").forEach(t=>t.classList.remove("active"));
     tab.classList.add("active");
     currentShot = tab.dataset.shot;
-    document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Built-in reference";
+    document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Reference video";
     resetPhaseTrack();
   });
 });
@@ -838,6 +840,7 @@ async function initModel(){
     });
     dot.classList.add("on"); txt.textContent="Pose model ready";
     document.getElementById("startCamBtn").disabled=false;
+    loadBuiltinStandards();
   }catch(e){
     console.error(e);
     dot.classList.add("err"); txt.textContent="Model failed to load — check connection";
@@ -864,8 +867,10 @@ let autoTriggering=false;
 window.capturingMotion=false;
 window.motionBuffer=[];
 
-// Normalized (0-1) bounds matching the .address-zone box drawn over the stage.
-const ADDRESS_ZONE = {xMin:0.26, xMax:0.74, yMin:0.14, yMax:0.90};
+// Normalized (0-1) bounds matching the small .address-zone box drawn over the
+// stage — sized just for detecting two hands together (holding a club/phone),
+// not the whole body.
+const ADDRESS_ZONE = {xMin:0.40, xMax:0.60, yMin:0.36, yMax:0.62};
 
 document.getElementById("pathToggleBtn").addEventListener("click", (e)=>{
   pathVisible = !pathVisible;
@@ -1255,20 +1260,23 @@ const uploadStatus = document.getElementById("uploadStatus");
 uploadInput.addEventListener("change", async (e)=>{
   const file = e.target.files[0];
   if(!file) return;
-  await processGestureVideo(URL.createObjectURL(file), uploadStatus, "upload");
+  await processGestureVideo(URL.createObjectURL(file), uploadStatus, "upload", currentShot);
 });
 
-// shared pipeline: takes any playable video URL (object URL from a file, or
-// a blob URL served by the local YouTube-clip helper) and extracts a
-// standard gesture from it, same as the manual upload path.
-async function processGestureVideo(srcUrl, statusEl, sourceLabel){
+// shared pipeline: takes any playable video URL (an uploaded file, or one of
+// the bundled standard-gesture clips) and extracts a standard gesture from it
+// by running it through the same pose model used for live tracking — the
+// skeleton comes from actually watching the reference video, not hand-typed
+// numbers. targetShot is which shot type (swing/putting/chip) this result
+// should be saved under, independent of whichever tab is currently active.
+async function processGestureVideo(srcUrl, statusEl, sourceLabel, targetShot){
   if(!poseLandmarker){ alert("Pose model still loading, please wait a moment and retry."); return; }
-  statusEl.textContent = "Processing clip — extracting skeleton…";
+  if(statusEl) statusEl.textContent = `Analyzing ${targetShot} reference video — extracting skeleton…`;
   uploadVideo.src = srcUrl;
   await new Promise((res,rej)=>{
     uploadVideo.onloadedmetadata = res;
     uploadVideo.onerror = ()=>rej(new Error("Could not load video"));
-  }).catch(err=>{ statusEl.textContent = "Couldn't load that video clip. " + err.message; throw err; });
+  }).catch(err=>{ if(statusEl) statusEl.textContent = "Couldn't load that video clip. " + err.message; throw err; });
   await uploadVideo.play();
 
   const buffer=[];
@@ -1287,15 +1295,15 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel){
   uploadVideo.pause();
 
   if(buffer.length<8){
-    statusEl.textContent = "Couldn't detect a clear full-body pose in that clip. Try a side-on clip with the whole body visible.";
-    return;
+    if(statusEl) statusEl.textContent = "Couldn't detect a clear full-body pose in that clip. Try a side-on clip with the whole body visible.";
+    throw new Error("no pose detected");
   }
 
   const phasesLM = segmentPhases(buffer);
   const newTarget={};
   PHASES.forEach(p=>{ newTarget[p] = extractMetrics(phasesLM[p]); });
-  standards[currentShot] = newTarget;
-  customFlag[currentShot] = true;
+  standards[targetShot] = newTarget;
+  if(sourceLabel === "upload") customFlag[targetShot] = true;
 
   const toGhostPts = (lm)=>({
     head:[lm[L.nose].x,lm[L.nose].y],
@@ -1308,10 +1316,33 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel){
   });
   const ghostSet={};
   PHASES.forEach(p=>{ ghostSet[p]=toGhostPts(phasesLM[p]); });
-  customGhost[currentShot] = ghostSet;
+  customGhost[targetShot] = ghostSet;
 
-  document.getElementById("ghostSource").textContent = "Custom uploaded reference";
-  statusEl.textContent = `Custom ${currentShot} reference saved from your upload — this now replaces the built-in standard for ${currentShot}.`;
+  if(targetShot === currentShot){
+    document.getElementById("ghostSource").textContent = sourceLabel === "upload" ? "Custom uploaded reference" : "Reference video";
+  }
+  if(statusEl){
+    statusEl.textContent = sourceLabel === "upload"
+      ? `Custom ${targetShot} reference saved from your upload — this now replaces the built-in standard for ${targetShot}.`
+      : `${targetShot[0].toUpperCase()+targetShot.slice(1)} reference video analyzed.`;
+  }
+}
+
+/* ---------------- Built-in standard gestures: extracted from your reference
+ * videos on first load, the same way an uploaded gesture is processed — no
+ * hand-typed numbers. Runs once the pose model is ready; each shot type's
+ * ghost animation switches over to the real extracted skeleton as soon as its
+ * clip finishes analyzing (a few seconds each, run one after another). */
+const BUILTIN_GESTURE_VIDEOS = { swing:"standard-swing.mp4", putting:"standard-putting.mp4", chip:"standard-chip.mp4" };
+async function loadBuiltinStandards(){
+  for(const shot of ["swing","putting","chip"]){
+    try{
+      await processGestureVideo(BUILTIN_GESTURE_VIDEOS[shot], document.getElementById("ghostSource"), "builtin", shot);
+    }catch(e){
+      console.warn("[swingvision] falling back to illustrative reference for", shot, e);
+    }
+  }
+  document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Reference video";
 }
 
 </script>

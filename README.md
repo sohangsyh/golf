@@ -10,6 +10,13 @@ Open `index.html` in any browser and allow camera access. Live skeleton tracking
 the Swing/Putting/Chip standard poses, match scoring, and "upload your own gesture"
 all work immediately — nothing to configure.
 
+The Swing/Putting/Chip reference poses shown in the right panel are extracted
+from the bundled `standard-swing.mp4` / `standard-putting.mp4` / `standard-chip.mp4`
+clips — the same pose-detection pipeline used for "upload your own gesture" runs
+on these automatically the first time the pose model finishes loading (takes a
+few seconds per clip). To change what "standard" looks like, just replace those
+three video files with your own and re-upload — no code changes needed.
+
 ## Setting up the Club Sensor (phone pairing) — one-time, ~5 minutes
 Club Sensor pairs your iPhone to the site over the internet using
 [Supabase](https://supabase.com)'s free Realtime service (a hosted pub/sub — think of
