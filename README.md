@@ -76,7 +76,12 @@ advice on the right, and all the numeric swing metrics along the bottom. The
 comparison plays your full recorded swing motion on a loop — every frame,
 not just a handful of snapshots — with your skeleton in gold over the
 reference skeleton in green, and a label showing roughly which part of the
-swing (address→top, top→impact, impact→finish) is playing.
+swing (address→top, top→impact, impact→finish) is playing. The reference
+skeleton is time-warped phase by phase to stay locked to the same moment of
+the swing as you (address together, top together, impact together, finish
+together), even though your tempo and the reference video's tempo aren't
+identical — so the two always read as doing the same movement, not just two
+clips playing side by side at their own independent speeds.
 
 Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
 Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your

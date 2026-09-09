@@ -898,17 +898,45 @@ function segmentPhaseTimes(buffer){
   };
 }
 
-// The comparison animation now plays back the FULL recorded swing frame by
+// Turns a buffer's own [start, top, impact, finish] timestamps into the 4
+// boundary points a piecewise time-map needs.
+function phaseBoundaries(buffer, phaseTimes){
+  return [buffer[0].t, phaseTimes.top, phaseTimes.impact, phaseTimes.finish];
+}
+// Maps a time in the SOURCE buffer's timeline to the equivalent time in the
+// DEST buffer's timeline, phase-by-phase: whatever fraction of the way t is
+// between two of the source's phase boundaries, the result is that same
+// fraction of the way between the matching dest boundaries. This is what
+// keeps the two skeletons doing "exactly the same movement" in sync — your
+// swing and the reference video are almost never the same length or tempo,
+// so playing both back at raw proportional time drifts them apart (you'd be
+// at "top" while the reference is already at "impact"). Warping time this
+// way instead locks address-to-address, top-to-top, impact-to-impact and
+// finish-to-finish, with everything in between smoothly interpolated.
+function mapPhaseTime(t, srcBounds, dstBounds){
+  for(let i=0;i<srcBounds.length-1;i++){
+    const a=srcBounds[i], b=srcBounds[i+1];
+    if(t<=b || i===srcBounds.length-2){
+      const span = (b-a) || 1e-6;
+      const f = Math.min(1, Math.max(0, (t-a)/span));
+      const da=dstBounds[i], db=dstBounds[i+1];
+      return da + f*(db-da);
+    }
+  }
+  return dstBounds[dstBounds.length-1];
+}
+
+// The comparison animation plays back the FULL recorded swing frame by
 // frame (not just 4 static address/top/impact/finish poses stitched
-// together) — that's what was reading as "only 4 steps" and feeling jerky.
-// Your real buffer and the reference video's real buffer each loop over
-// their own actual duration, sampled with nearestFrame() every animation
-// frame, so the motion is as smooth as the original recordings.
+// together), driven by your own real swing's timeline on a loop. The
+// reference skeleton is then time-warped phase-by-phase (see mapPhaseTime
+// above) to stay locked to the same moment of the swing as you, instead of
+// just running on its own independent clock.
 let matchCompareUserBuf=null, matchCompareRefBuf=null, matchCompareShot=null;
 let matchCompareUserPhasesFallback=null; // used only if a full buffer isn't available for some reason
 let matchCompareUserT0=0, matchCompareUserDur=1600;
-let matchCompareRefT0=0, matchCompareRefDur=1.6;
 let matchComparePhaseTimes=null;
+let matchCompareUserBounds=null, matchCompareRefBounds=null;
 let matchCompareLoopStart=0, matchCompareCycleMs=1600;
 
 function startMatchCompare(userBuffer, shot, userPhasesLM){
@@ -916,20 +944,20 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   matchCompareRefBuf = (fullPoseBuffers[shot] && fullPoseBuffers[shot].length>=2) ? fullPoseBuffers[shot] : null;
   matchCompareShot = shot;
   matchCompareUserPhasesFallback = userPhasesLM;
+  matchCompareUserBounds = null; matchCompareRefBounds = null;
 
   if(matchCompareUserBuf){
     matchCompareUserT0 = matchCompareUserBuf[0].t;
     matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
     matchComparePhaseTimes = segmentPhaseTimes(matchCompareUserBuf);
+    matchCompareUserBounds = phaseBoundaries(matchCompareUserBuf, matchComparePhaseTimes);
   } else {
     matchCompareUserDur = 1600;
     matchComparePhaseTimes = null;
   }
   if(matchCompareRefBuf){
-    matchCompareRefT0 = matchCompareRefBuf[0].t;
-    matchCompareRefDur = Math.max(0.3, matchCompareRefBuf[matchCompareRefBuf.length-1].t - matchCompareRefT0);
-  } else {
-    matchCompareRefT0 = 0; matchCompareRefDur = 1.6;
+    const refPhaseTimes = segmentPhaseTimes(matchCompareRefBuf);
+    matchCompareRefBounds = phaseBoundaries(matchCompareRefBuf, refPhaseTimes);
   }
   matchCompareCycleMs = Math.max(matchCompareUserDur, 900);
   matchCompareLoopStart = performance.now();
@@ -956,17 +984,20 @@ function matchCompareLoop(){
         else if(userT < matchComparePhaseTimes.finish) labelPhase = "Impact → Finish";
         else labelPhase = "Finish";
       }
+
+      if(matchCompareRefBuf && matchCompareUserBounds && matchCompareRefBounds){
+        // phase-locked: same moment of the swing on both skeletons
+        const refT = mapPhaseTime(userT, matchCompareUserBounds, matchCompareRefBounds);
+        const rf = nearestFrame(matchCompareRefBuf, refT);
+        refLM = rf && rf.landmarks;
+      }
     } else {
       const idx = Math.min(PHASES.length-1, Math.floor(p*PHASES.length));
       userLM = matchCompareUserPhasesFallback[PHASES[idx]];
       labelPhase = PHASES[idx].toUpperCase();
     }
 
-    if(matchCompareRefBuf){
-      const refT = matchCompareRefT0 + p*matchCompareRefDur;
-      const rf = nearestFrame(matchCompareRefBuf, refT);
-      refLM = rf && rf.landmarks;
-    } else {
+    if(!refLM){
       const refSet = referencePhaseLandmarks[matchCompareShot];
       if(refSet){
         const idx = Math.min(PHASES.length-1, Math.floor(p*PHASES.length));
