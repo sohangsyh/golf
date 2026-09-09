@@ -127,7 +127,7 @@
   .btn:disabled{opacity:.35;cursor:not-allowed;}
 
   .address-zone{
-    position:absolute; left:40%; right:40%; top:36%; bottom:38%;
+    position:absolute; left:25%; right:25%; top:50%; bottom:36%;
     border:2px dashed rgba(230,199,137,.55); border-radius:14px;
     display:flex; align-items:center; justify-content:center;
     pointer-events:none; transition:.25s; z-index:5;
@@ -1257,6 +1257,13 @@ const SWING_SPEED_THRESHOLD=0.05, STILL_SPEED_THRESHOLD=0.01, MAX_RECORD_MS=6000
 let pathVisible=true;
 let addressHoldStart=null;
 let autoTriggering=false;
+// true from the moment a swing finishes until the results popup is actually
+// showing (analyzeAndScore has a short staggered-reveal delay before
+// renderResults runs) — without this, a stale addressHoldStart left over
+// from before the swing could immediately re-trigger a brand new countdown
+// during that gap, which then wipes the swing path / hides the results
+// popup the instant it appears. See endRecording() and renderResults().
+let analyzing=false;
 window.capturingMotion=false;
 window.motionBuffer=[];
 
@@ -1320,10 +1327,11 @@ function sensorDisplayPath(){
 // and streaming, otherwise the camera hand-tracked path as a fallback
 let displayPathTrail=[];
 
-// Normalized (0-1) bounds matching the small .address-zone box drawn over the
-// stage — sized just for detecting two hands together (holding a club/phone),
-// not the whole body.
-const ADDRESS_ZONE = {xMin:0.40, xMax:0.60, yMin:0.36, yMax:0.62};
+// Normalized (0-1) bounds matching the .address-zone box drawn over the
+// stage — a wide, short horizontal band positioned around waist height
+// (lower than screen-center) rather than a tall square in the middle, since
+// that's roughly where your hands sit at address holding a club/phone.
+const ADDRESS_ZONE = {xMin:0.25, xMax:0.75, yMin:0.50, yMax:0.64};
 
 document.getElementById("pathToggleBtn").addEventListener("click", (e)=>{
   pathVisible = !pathVisible;
@@ -1488,12 +1496,16 @@ function trackLoop(){
       // starts a new countdown, and beginRecording() hides the results
       // popup out from under them a second or two later. That was the
       // "pops up, then jumps back to the countdown screen" bug.
-      if(!recording && !autoTriggering && matchOverlay.classList.contains("hidden")){
+      if(!recording && !autoTriggering && !analyzing && matchOverlay.classList.contains("hidden")){
         if(checkAddressPosition(lm)){
           addressZone.classList.add("ready");
           if(addressHoldStart===null){ addressHoldStart = performance.now(); }
           else if(performance.now()-addressHoldStart>1100){
             autoTriggering=true;
+            addressHoldStart=null; // clear it now, not just on exiting the zone — otherwise it's stale
+            // (from before this swing) and would instantly satisfy the >1100ms
+            // check again the moment auto-detection re-arms, firing a phantom
+            // countdown right after the swing that had just finished.
             addressZone.classList.remove("ready");
             startCountdown();
           }
@@ -1501,7 +1513,7 @@ function trackLoop(){
           addressHoldStart=null;
           addressZone.classList.remove("ready");
         }
-      } else if(!matchOverlay.classList.contains("hidden")){
+      } else {
         addressHoldStart=null;
         addressZone.classList.remove("ready");
       }
@@ -1519,6 +1531,7 @@ const recordBtn = document.getElementById("recordBtn");
 const stopBtn = document.getElementById("stopBtn");
 const recIndicator = document.getElementById("recIndicator");
 const downloadSwingLink = document.getElementById("downloadSwingLink");
+updateRecordBtnLabel(); // make sure the label matches currentShot right from page load
 
 /* ---------------- Video capture: composite the mirrored camera frame + skeleton
  * + swing path onto an offscreen canvas each frame while recording, and record
@@ -1580,6 +1593,7 @@ function beginRecording(){
 function endRecording(){
   if(!recording) return; // guard against auto-stop and the manual Stop button both firing
   recording=false; window.capturingMotion=false;
+  analyzing=true; addressHoldStart=null; // block auto-detect through the gap until renderResults() actually shows the popup
   recordBtn.style.display="inline-block"; stopBtn.style.display="none";
   updateRecordBtnLabel();
   recIndicator.classList.remove("on");
@@ -1601,6 +1615,7 @@ function endRecording(){
 
   if(liveBuffer.length<8){
     alert("Recording too short — capture your full swing motion, then stop.");
+    analyzing=false;
     return;
   }
   analyzeAndScore(liveBuffer, currentShot);
@@ -1700,6 +1715,7 @@ function analyzeAndScore(buffer, shot){
 }
 
 function renderResults(overall, topDeviations, barData, sensorMetrics, userPhasesLM, shot, fullUserBuffer){
+  analyzing=false; // the popup is up now — safe to let auto-detect re-arm once it's closed
   matchOverlay.classList.remove("hidden");
   startMatchCompare(fullUserBuffer, shot, userPhasesLM);
   const circle = document.getElementById("scoreCircle");

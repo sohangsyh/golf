@@ -100,7 +100,15 @@ syncs to are always the same four moments.
 Once your swing finishes and the results popup is open, standing back in the
 address zone (which is normal — that's where you just were) won't silently
 start a new countdown and yank the popup away — auto-recording only re-arms
-once you've closed the results.
+once you've closed the results. This is also now covered for the brief gap
+right after a swing, before the popup has actually appeared — a leftover
+timer from before your swing could previously fire again in that gap,
+instantly starting a phantom countdown that wiped the swing path and hid the
+results the moment they showed up. Fixed at the source.
+
+The address box you hold your hands in has moved down a bit (roughly waist
+height rather than screen-center) and is now a wide, short horizontal
+rectangle instead of a tall square.
 
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:
