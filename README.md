@@ -106,9 +106,10 @@ timer from before your swing could previously fire again in that gap,
 instantly starting a phantom countdown that wiped the swing path and hid the
 results the moment they showed up. Fixed at the source.
 
-The address box you hold your hands in has moved down a bit (roughly waist
-height rather than screen-center) and is now a wide, short horizontal
-rectangle instead of a tall square.
+The address box you hold your hands in is now sized to exactly match the
+**Enable Camera** button (measured from the real rendered button, so it
+stays exact if you ever restyle it) and sits a bit lower on screen than
+before, roughly where your hands fall at address.
 
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:

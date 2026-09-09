@@ -127,10 +127,12 @@
   .btn:disabled{opacity:.35;cursor:not-allowed;}
 
   .address-zone{
-    position:absolute; left:25%; right:25%; top:50%; bottom:36%;
+    /* size and position are set from JS (see updateAddressZoneGeometry) so
+       it can exactly match the Enable Camera button's rendered size */
+    position:absolute; left:50%; top:62%; transform:translate(-50%,-50%);
     border:2px dashed rgba(230,199,137,.55); border-radius:14px;
     display:flex; align-items:center; justify-content:center;
-    pointer-events:none; transition:.25s; z-index:5;
+    pointer-events:none; transition:border-color .25s, box-shadow .25s; z-index:5;
   }
   .address-zone span{
     position:absolute; top:100%; margin-top:8px; width:max-content; max-width:220px;
@@ -1328,10 +1330,47 @@ function sensorDisplayPath(){
 let displayPathTrail=[];
 
 // Normalized (0-1) bounds matching the .address-zone box drawn over the
-// stage — a wide, short horizontal band positioned around waist height
-// (lower than screen-center) rather than a tall square in the middle, since
-// that's roughly where your hands sit at address holding a club/phone.
+// stage. Mutated (not just read) by updateAddressZoneGeometry() below, which
+// sizes the box to exactly match the Enable Camera button and keeps these
+// detection bounds in sync with wherever that box actually ends up on screen.
 const ADDRESS_ZONE = {xMin:0.25, xMax:0.75, yMin:0.50, yMax:0.64};
+// vertical center of the box, as a fraction down the stage — a bit lower
+// than screen-center, roughly where your hands sit holding a club at address
+const ADDRESS_ZONE_CENTER_Y = 0.66;
+let addressZoneSize=null; // {w,h} in px, cached from the Enable Camera button
+
+function updateAddressZoneGeometry(){
+  const stageEl = document.getElementById("stage");
+  const btnEl = document.getElementById("startCamBtn");
+  if(!stageEl) return;
+  // measure the button while it's still visible/laid out; once the camera
+  // starts it's hidden (display:none) and getBoundingClientRect() would
+  // return zeros, so the size gets cached the first time and reused after
+  if(btnEl && btnEl.offsetParent !== null){
+    const r = btnEl.getBoundingClientRect();
+    if(r.width>0 && r.height>0) addressZoneSize = {w:r.width, h:r.height};
+  }
+  if(!addressZoneSize) return; // nothing measured yet (button not laid out this tick)
+
+  const stageRect = stageEl.getBoundingClientRect();
+  addressZone.style.width = addressZoneSize.w + "px";
+  addressZone.style.height = addressZoneSize.h + "px";
+  addressZone.style.top = (ADDRESS_ZONE_CENTER_Y*100) + "%";
+
+  if(stageRect.width>0 && stageRect.height>0){
+    const boxLeft = (stageRect.width - addressZoneSize.w)/2;
+    const boxTop = stageRect.height*ADDRESS_ZONE_CENTER_Y - addressZoneSize.h/2;
+    ADDRESS_ZONE.xMin = boxLeft / stageRect.width;
+    ADDRESS_ZONE.xMax = (boxLeft + addressZoneSize.w) / stageRect.width;
+    ADDRESS_ZONE.yMin = boxTop / stageRect.height;
+    ADDRESS_ZONE.yMax = (boxTop + addressZoneSize.h) / stageRect.height;
+  }
+}
+window.addEventListener("resize", updateAddressZoneGeometry);
+window.addEventListener("load", updateAddressZoneGeometry);
+// fonts loading in can change the button's rendered size after first paint
+if(document.fonts && document.fonts.ready){ document.fonts.ready.then(updateAddressZoneGeometry); }
+updateAddressZoneGeometry();
 
 document.getElementById("pathToggleBtn").addEventListener("click", (e)=>{
   pathVisible = !pathVisible;
@@ -1391,6 +1430,7 @@ async function startCamera(){
     const stream = await navigator.mediaDevices.getUserMedia({video:{width:1280,height:960,facingMode:"user"}});
     video.srcObject = stream;
     await video.play();
+    updateAddressZoneGeometry(); // grab the button's final rendered size before it's hidden
     camHint.style.display="none";
     fitOverlay();
     camRunning=true;
