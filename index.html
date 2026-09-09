@@ -266,6 +266,29 @@
     color:var(--gold-bright);
   }
   .qr-status{margin-top:10px;font-size:11.5px;color:var(--text-lo);}
+
+  .match-overlay{
+    position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+    background:rgba(3,4,5,0.82);backdrop-filter:blur(6px);padding:20px;overflow-y:auto;
+    animation:fadeIn .2s ease both;
+  }
+  .match-card{
+    position:relative;width:100%;max-width:460px;
+    background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+    border:1px solid var(--panel-border);border-radius:22px;padding:32px 28px 28px;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);margin:auto;
+  }
+  .match-compare-wrap{
+    position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;margin-top:22px;
+    background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
+    border:1px solid var(--panel-border);overflow:hidden;
+  }
+  .match-compare-wrap canvas{position:absolute;inset:0;width:100%;height:100%;}
+  .match-phase-label{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-bright);opacity:.85;}
+  .match-legend{position:absolute;bottom:12px;left:14px;display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-mid);}
+  .match-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  .match-legend .dot.you{background:#e6c789;}
+  .match-legend .dot.ref{margin-left:10px;background:#2e9c78;}
   .qr-status.paired{color:var(--emerald-bright);}
 
   .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
@@ -343,44 +366,6 @@
       </div>
     </div>
 
-    <div class="results" id="results" style="display:none;">
-      <div class="score-row">
-        <div class="score-ring">
-          <svg width="108" height="108">
-            <defs>
-              <linearGradient id="scoreGrad" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="#2e9c78"/>
-                <stop offset="100%" stop-color="#e6c789"/>
-              </linearGradient>
-            </defs>
-            <circle class="bg" cx="54" cy="54" r="46" stroke-width="9" fill="none"/>
-            <circle class="fg" id="scoreCircle" cx="54" cy="54" r="46" stroke-width="9" fill="none" stroke-dasharray="289" stroke-dashoffset="289"/>
-          </svg>
-          <div class="score-num"><b id="scoreNum">0</b><span>MATCH</span></div>
-        </div>
-        <div class="score-meta">
-          <h3 id="scoreHeadline">Analyzing…</h3>
-          <p id="scoreSub">Compared against your selected standard gesture.</p>
-        </div>
-      </div>
-
-      <ul class="advice-list" id="adviceList"></ul>
-
-      <div class="swing-metrics" id="swingMetrics" style="display:none;">
-        <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
-        <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
-        <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
-        <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
-        <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
-        <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
-      </div>
-      <p class="small-note" id="metricsNote" style="display:none;">
-        Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
-      </p>
-      <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
-
-      <div class="metric-bars" id="metricBars"></div>
-    </div>
   </section>
 
   <!-- RIGHT PANEL: STANDARD GESTURE -->
@@ -426,6 +411,55 @@
     <div class="qr-canvas-wrap"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
     <button class="btn btn-outline" id="qrCopyLinkBtn" style="margin-top:14px;">Copy Link Instead</button>
     <div class="qr-status" id="qrStatus">Waiting for phone to scan…</div>
+  </div>
+</div>
+
+<div class="match-overlay hidden" id="matchOverlay">
+  <div class="match-card">
+    <button class="qr-close" id="matchCloseBtn" aria-label="Close">×</button>
+
+    <div class="score-row">
+      <div class="score-ring">
+        <svg width="108" height="108">
+          <defs>
+            <linearGradient id="scoreGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#2e9c78"/>
+              <stop offset="100%" stop-color="#e6c789"/>
+            </linearGradient>
+          </defs>
+          <circle class="bg" cx="54" cy="54" r="46" stroke-width="9" fill="none"/>
+          <circle class="fg" id="scoreCircle" cx="54" cy="54" r="46" stroke-width="9" fill="none" stroke-dasharray="289" stroke-dashoffset="289"/>
+        </svg>
+        <div class="score-num"><b id="scoreNum">0</b><span>MATCH</span></div>
+      </div>
+      <div class="score-meta">
+        <h3 id="scoreHeadline">Analyzing…</h3>
+        <p id="scoreSub">Compared against your selected standard gesture.</p>
+      </div>
+    </div>
+
+    <div class="match-compare-wrap">
+      <canvas id="matchCompareCanvas"></canvas>
+      <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
+      <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference</div>
+    </div>
+
+    <ul class="advice-list" id="adviceList"></ul>
+
+    <div class="swing-metrics" id="swingMetrics" style="display:none;">
+      <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
+      <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
+      <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
+      <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
+      <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
+      <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
+    </div>
+    <p class="small-note" id="metricsNote" style="display:none;">
+      Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
+    </p>
+    <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
+
+    <div class="metric-bars" id="metricBars"></div>
   </div>
 </div>
 
@@ -534,6 +568,9 @@ const gestureVideoUrls = {swing:"standard-swing.mp4", putting:"standard-putting.
 // full frame-by-frame pose buffers per shot type ({t, landmarks}[], video-time
 // order) so the skeleton overlay can stay in sync with the playing video.
 const fullPoseBuffers = {swing:null, putting:null, chip:null};
+// the reference video's landmarks at each phase (address/top/impact/finish),
+// for drawing the two-skeleton comparison in the results popup
+const referencePhaseLandmarks = {swing:null, putting:null, chip:null};
 
 let currentShot = "swing";
 
@@ -757,6 +794,7 @@ function openPairingChannel(client) {
       qrStatus.classList.add("paired");
       pairChannel.send({ type: "broadcast", event: "paired", payload: { name: "Desktop" } });
       setTimeout(() => qrOverlay.classList.add("hidden"), 900);
+      if(!camRunning) startCamera(); // turn the camera on automatically once the phone connects
     })
     .on("broadcast", { event: "motion" }, (msg) => {
       window.latestClubMotion = msg.payload;
@@ -797,6 +835,63 @@ function openPairingChannel(client) {
 
 qrCloseBtn.addEventListener("click", () => qrOverlay.classList.add("hidden"));
 qrOverlay.addEventListener("click", (e) => { if (e.target === qrOverlay) qrOverlay.classList.add("hidden"); });
+
+/* ---------------- Match results popup: shown after each recorded swing ---------------- */
+const matchOverlay = document.getElementById("matchOverlay");
+const matchCloseBtn = document.getElementById("matchCloseBtn");
+matchCloseBtn.addEventListener("click", () => matchOverlay.classList.add("hidden"));
+matchOverlay.addEventListener("click", (e) => { if (e.target === matchOverlay) matchOverlay.classList.add("hidden"); });
+
+// Your camera and the reference video are filmed at different distances/framing,
+// so raw landmark coordinates from the two aren't directly comparable on one
+// canvas. This re-centers each skeleton on its own hip midpoint and rescales it
+// by torso length, so both are drawn at the same size and position — the shapes
+// become comparable even though the source footage isn't.
+function normalizeForCompare(landmarks, cx, cy, scaleTo){
+  const hipMid = {x:(landmarks[L.lHip].x+landmarks[L.rHip].x)/2, y:(landmarks[L.lHip].y+landmarks[L.rHip].y)/2};
+  const shMid = {x:(landmarks[L.lShoulder].x+landmarks[L.rShoulder].x)/2, y:(landmarks[L.lShoulder].y+landmarks[L.rShoulder].y)/2};
+  const torsoLen = Math.hypot(shMid.x-hipMid.x, shMid.y-hipMid.y) || 0.2;
+  const scale = scaleTo/torsoLen;
+  return landmarks.map(p=>({x: cx+(p.x-hipMid.x)*scale, y: cy+(p.y-hipMid.y)*scale}));
+}
+
+const matchCompareCanvas = document.getElementById("matchCompareCanvas");
+const matchCompareCtx = matchCompareCanvas.getContext("2d");
+function fitMatchCompareCanvas(){
+  const rect = matchCompareCanvas.parentElement.getBoundingClientRect();
+  matchCompareCanvas.width = rect.width; matchCompareCanvas.height = rect.height;
+}
+window.addEventListener("resize", fitMatchCompareCanvas);
+fitMatchCompareCanvas();
+
+let matchCompareUser=null, matchCompareShot=null, matchComparePhaseIdx=0, matchCompareT=0;
+function startMatchCompare(userPhasesLM, shot){
+  matchCompareUser = userPhasesLM;
+  matchCompareShot = shot;
+  matchComparePhaseIdx = 0;
+  matchCompareT = performance.now();
+}
+
+function matchCompareLoop(){
+  if(matchCompareUser && !matchOverlay.classList.contains("hidden")){
+    const w=matchCompareCanvas.width, h=matchCompareCanvas.height;
+    const now = performance.now();
+    if(now-matchCompareT>1100){ matchCompareT=now; matchComparePhaseIdx=(matchComparePhaseIdx+1)%PHASES.length; }
+    matchCompareCtx.clearRect(0,0,w,h);
+    const phase = PHASES[matchComparePhaseIdx];
+    document.getElementById("matchPhaseLabel").textContent = phase.toUpperCase();
+
+    const refSet = referencePhaseLandmarks[matchCompareShot];
+    if(refSet && refSet[phase]){
+      const refNorm = normalizeForCompare(refSet[phase], 0.5, 0.55, 0.22);
+      drawSkeletonOn(matchCompareCtx, w, h, refNorm, "rgba(46,156,120,0.85)", "#2e9c78");
+    }
+    const userNorm = normalizeForCompare(matchCompareUser[phase], 0.5, 0.55, 0.22);
+    drawSkeletonOn(matchCompareCtx, w, h, userNorm, "rgba(230,199,137,0.9)", "#e6c789");
+  }
+  requestAnimationFrame(matchCompareLoop);
+}
+requestAnimationFrame(matchCompareLoop);
 
 /* ---------------- PWA: install + service worker ---------------- */
 if ("serviceWorker" in navigator) {
@@ -881,6 +976,10 @@ let liveBuffer=[]; // {t, landmarks}
 let recording=false;
 let lastLM=null;
 let pathTrail=[];
+// auto-stop-on-swing-completion state: watch wrist speed to detect that a
+// swing happened and the player's hands have settled again
+let prevWristMid=null, swingPeakSeen=false, stillFrames=0, recordStartTime=0;
+const SWING_SPEED_THRESHOLD=0.05, STILL_SPEED_THRESHOLD=0.01, MAX_RECORD_MS=6000;
 let pathVisible=true;
 let addressHoldStart=null;
 let autoTriggering=false;
@@ -914,13 +1013,13 @@ function clubProxy(lm){
   return {x: wristMid.x+dx*2.0, y: wristMid.y+dy*2.0};
 }
 
-function drawSkeletonOn(ctx,w,h,landmarks){
-  ctx.lineWidth=3; ctx.strokeStyle="rgba(230,199,137,0.9)";
+function drawSkeletonOn(ctx,w,h,landmarks,lineColor,dotColor){
+  ctx.lineWidth=3; ctx.strokeStyle=lineColor||"rgba(230,199,137,0.9)";
   CONNECTIONS.forEach(([a,b])=>{
     const pa=landmarks[a], pb=landmarks[b];
     ctx.beginPath(); ctx.moveTo(pa.x*w,pa.y*h); ctx.lineTo(pb.x*w,pb.y*h); ctx.stroke();
   });
-  ctx.fillStyle="#2e9c78";
+  ctx.fillStyle=dotColor||"#2e9c78";
   landmarks.forEach(p=>{ ctx.beginPath(); ctx.arc(p.x*w,p.y*h,4,0,7); ctx.fill(); });
 }
 
@@ -998,6 +1097,20 @@ function trackLoop(){
       if(recording){
         liveBuffer.push({t:performance.now(), landmarks:lm});
         pathTrail.push(clubProxy(lm));
+
+        // auto-stop once the swing has clearly happened and the hands have
+        // settled back down, rather than requiring a manual Stop click
+        const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
+        if(prevWristMid){
+          const speed = Math.hypot(wristMid.x-prevWristMid.x, wristMid.y-prevWristMid.y);
+          if(speed > SWING_SPEED_THRESHOLD) swingPeakSeen = true;
+          stillFrames = (swingPeakSeen && speed < STILL_SPEED_THRESHOLD) ? stillFrames+1 : 0;
+        }
+        prevWristMid = wristMid;
+        const elapsed = performance.now()-recordStartTime;
+        if((swingPeakSeen && stillFrames>12) || elapsed>MAX_RECORD_MS){
+          endRecording();
+        }
       }
       if(pathVisible && pathTrail.length>1){ drawPathTrail(octx, overlay.width, overlay.height, pathTrail); }
       if(!recording && !autoTriggering){
@@ -1057,9 +1170,10 @@ function recordFrameLoop(){
 function beginRecording(){
   liveBuffer=[]; pathTrail=[]; window.motionBuffer=[]; window.capturingMotion=true;
   recording=true;
+  prevWristMid=null; swingPeakSeen=false; stillFrames=0; recordStartTime=performance.now();
   recordBtn.style.display="none"; stopBtn.style.display="inline-block";
   recIndicator.classList.add("on");
-  document.getElementById("results").style.display="none";
+  matchOverlay.classList.add("hidden");
   downloadSwingLink.style.display="none";
   resetPhaseTrack();
 
@@ -1082,6 +1196,7 @@ function beginRecording(){
 }
 
 function endRecording(){
+  if(!recording) return; // guard against auto-stop and the manual Stop button both firing
   recording=false; window.capturingMotion=false;
   recordBtn.style.display="inline-block"; stopBtn.style.display="none";
   recIndicator.classList.remove("on");
@@ -1112,7 +1227,7 @@ recordBtn.addEventListener("click", beginRecording);
 stopBtn.addEventListener("click", endRecording);
 document.getElementById("resetBtn").addEventListener("click",()=>{
   liveBuffer=[]; pathTrail=[];
-  document.getElementById("results").style.display="none";
+  matchOverlay.classList.add("hidden");
   downloadSwingLink.style.display="none";
   resetPhaseTrack();
 });
@@ -1214,12 +1329,12 @@ function analyzeAndScore(buffer, shot){
   deviations.sort((a,b)=>b.absDiff-a.absDiff);
   const sensorMetrics = computeSensorMetrics(buffer, window.motionBuffer);
 
-  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData, sensorMetrics), PHASES.length*180+150);
+  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData, sensorMetrics, phasesLM, shot), PHASES.length*180+150);
 }
 
-function renderResults(overall, topDeviations, barData, sensorMetrics){
-  const results = document.getElementById("results");
-  results.style.display="block";
+function renderResults(overall, topDeviations, barData, sensorMetrics, userPhasesLM, shot){
+  matchOverlay.classList.remove("hidden");
+  startMatchCompare(userPhasesLM, shot);
   const circle = document.getElementById("scoreCircle");
   const circumference = 2*Math.PI*46;
   const offset = circumference - (overall/100)*circumference;
@@ -1323,6 +1438,7 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel, targetShot){
   const newTarget={};
   PHASES.forEach(p=>{ newTarget[p] = extractMetrics(phasesLM[p]); });
   standards[targetShot] = newTarget;
+  referencePhaseLandmarks[targetShot] = phasesLM;
   if(sourceLabel === "upload") customFlag[targetShot] = true;
 
   // keep the full frame-by-frame buffer so the Standard Gesture panel can play

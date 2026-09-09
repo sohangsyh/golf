@@ -50,22 +50,30 @@ out of the box on any channel name.
    accelerometer/rotation numbers on both screens.
 
 ## Taking a swing
-Stand in the dashed box shown on the camera view, holding your club (or your
-phone, if that's standing in for one) with both hands. Hold still for about a
-second and SwingVision counts down 3-2-1-GO! and starts recording automatically
+Once your phone connects as a Club Sensor, the camera turns on automatically.
+Stand in the small dashed box in the middle of the camera view, holding your
+club (or your phone, if that's standing in for one) with both hands. Hold still
+for about a second and SwingVision counts down 3-2-1-GO! and starts recording
 — no need to click Record yourself, though the button's still there if you'd
 rather trigger it manually.
 
-While recording, a gold swing path is drawn live over your skeleton and baked
-into a downloadable video of the swing. Use the **Swing Path** button to turn
-that overlay on or off.
+Recording stops on its own once it detects the swing has happened and your
+hands have settled again (or after 6 seconds either way, as a fallback) — no
+need to click Stop either. While recording, a gold swing path is drawn live
+over your skeleton and baked into a downloadable video of the swing. Use the
+**Swing Path** button to turn that overlay on or off.
 
-After the swing, alongside the pose-matching score you'll see estimated Swing
-Speed, Club Speed, Club Path, Attack Angle, and Face Angle. Speed and Face Angle
-come from your phone's Club Sensor (connect it first for those to show); Club
-Path and Attack Angle come from the camera. All of these are rough, illustrative
-estimates useful for comparing one swing to the next at home — not numbers from
-a calibrated launch monitor. Impact Location isn't shown, since measuring where
+When the swing is done, a results popup appears: your match score, an animated
+comparison that cycles through address/top/impact/finish showing your skeleton
+(gold) over the reference skeleton (green) at each phase, coaching advice, and
+the swing metrics below.
+
+Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
+Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your
+phone's Club Sensor (connect it first for those to show); Club Path and Attack
+Angle come from the camera. All of these are rough, illustrative estimates
+useful for comparing one swing to the next at home — not numbers from a
+calibrated launch monitor. Impact Location isn't shown, since measuring where
 on the clubface you struck the ball needs a sensor mounted on the club itself,
 which nothing here provides.
 
