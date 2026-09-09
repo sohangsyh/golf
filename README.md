@@ -135,7 +135,7 @@ as the same movement, whichever handedness mode you're in.
 
 ## Results layout and the swing path
 
-The swing path in the results popup now grows in step with the phase-locked
+The swing path in the results popup grows in step with the phase-locked
 comparison animation instead of appearing all at once — it's split by
 address→top, top→impact, and impact→finish (using each point's actual
 recording timestamp) and revealed in that same sequence as the skeletons
@@ -143,10 +143,34 @@ play through those phases, so the path and the "ADDRESS → TOP" / "TOP →
 IMPACT" / "IMPACT → FINISH" label above it are always showing the same
 moment of the swing.
 
-Coaching notes, the metric bars, and the download link now live in a
-right-hand column next to the skeleton comparison (instead of stacked below
-everything), so the popup needs far less scrolling — the skeleton view stays
-in place while that column scrolls independently if there's a lot to show.
+Two rendering bugs that made the path and skeleton look disconnected from
+each other (path drifting away from the hands, or the whole thing reading
+as generally laggy) are fixed now:
+
+- The skeleton used to re-center itself on the body's current position every
+  single frame, while the swing path was drawn in a fixed frame anchored to
+  address. That meant the two disagreed about where the body actually was
+  as it moved through the swing, so the red path would visibly drift away
+  from the gold/green hands instead of tracking them. Both skeletons and the
+  path are now drawn in the same fixed, address-anchored frame, so the path
+  always passes exactly through wherever the hands are at every instant.
+- Playback used to snap to whichever recorded frame was nearest in time,
+  which — since the pose model can't sample every single screen refresh —
+  showed up as a stair-step hold-then-jump motion rather than smooth
+  movement. Both skeletons are now interpolated between the two real frames
+  bracketing each moment, so the comparison plays back genuinely smoothly
+  regardless of how fast the pose model itself is running.
+
+Coaching notes, the swing-metrics numbers, the Download Swing Video button,
+and the phase-by-phase match bars all live in a right-hand column next to
+the skeleton comparison, laid out side-by-side to use the screen's actual
+landscape width rather than stacking everything into one narrow, tall
+column. The popup itself is now sized for that (up to 1360px wide instead
+of 720px), so the right column has real room and normally doesn't need its
+own scrollbar at all. The Download Swing Video button sits right under the
+speed/path/angle numbers so it's easy to find rather than buried under a
+paragraph of fine print — that fine print now sits at the very bottom,
+below the phase bars, since it's the least essential thing there.
 
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:
