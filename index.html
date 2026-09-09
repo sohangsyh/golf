@@ -186,9 +186,14 @@
     background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
     border:1px solid var(--panel-border);overflow:hidden;
   }
-  .ghost-wrap canvas{width:100%;height:100%;}
-  .ghost-label{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-bright);opacity:.85;}
-  .ghost-source{position:absolute;bottom:12px;left:14px;font-size:10.5px;color:var(--text-lo);}
+  .ghost-wrap video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
+  .ghost-wrap canvas{position:absolute;inset:0;width:100%;height:100%;}
+  .ghost-label{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-bright);opacity:.85;z-index:2;}
+  .ghost-source{position:absolute;bottom:12px;left:14px;font-size:10.5px;color:var(--text-hi);background:rgba(7,8,10,.55);padding:3px 9px;border-radius:20px;z-index:2;}
+
+  .ghost-controls{display:flex;gap:10px;margin-top:14px;}
+  .ghost-toggle{flex:1;opacity:.5;}
+  .ghost-toggle.on{opacity:1;border-color:var(--gold);color:var(--gold-bright);background:rgba(201,163,92,.1);}
 
   .upload-row{display:flex;gap:10px;margin-top:16px;}
   .upload-row input[type=file]{display:none;}
@@ -389,9 +394,14 @@
     </div>
 
     <div class="ghost-wrap">
-      <div class="ghost-label" id="ghostPhaseLabel">ADDRESS</div>
-      <canvas id="ghostCanvas"></canvas>
-      <div class="ghost-source" id="ghostSource">Built-in reference</div>
+      <div class="ghost-label">REFERENCE</div>
+      <video id="ghostVideo" muted loop playsinline></video>
+      <canvas id="ghostOverlay"></canvas>
+      <div class="ghost-source" id="ghostSource">Loading…</div>
+    </div>
+    <div class="ghost-controls">
+      <button class="btn btn-outline ghost-toggle on" id="toggleGhostVideo">Video</button>
+      <button class="btn btn-outline ghost-toggle on" id="toggleGhostSkeleton">Skeleton</button>
     </div>
 
     <div class="upload-row">
@@ -517,19 +527,13 @@ const DEFAULT_STANDARDS = {
 // deep-copy per shot type, mutated when user uploads a custom reference
 const standards = JSON.parse(JSON.stringify(DEFAULT_STANDARDS));
 const customFlag = {swing:false, putting:false, chip:false};
-// hand-authored side-on stick figure keypoints (normalized 0-1) for built-in ghost animation
-const GHOST_POSES = {
-  swing:{
-    address:{head:[.5,.18],lSh:[.47,.30],rSh:[.53,.30],lEl:[.44,.42],rEl:[.56,.42],lWr:[.50,.55],rWr:[.50,.55],lHip:[.48,.55],rHip:[.52,.55],lKn:[.47,.72],rKn:[.53,.72],lAn:[.47,.90],rAn:[.53,.90]},
-    top:{head:[.52,.17],lSh:[.44,.29],rSh:[.60,.32],lEl:[.36,.24],rEl:[.66,.30],lWr:[.30,.20],rWr:[.62,.20],lHip:[.49,.55],rHip:[.55,.55],lKn:[.46,.72],rKn:[.55,.72],lAn:[.47,.90],rAn:[.54,.90]},
-    impact:{head:[.49,.19],lSh:[.45,.31],rSh:[.58,.32],lEl:[.55,.44],rEl:[.62,.42],lWr:[.62,.55],rWr:[.60,.55],lHip:[.47,.55],rHip:[.53,.55],lKn:[.46,.72],rKn:[.53,.72],lAn:[.47,.90],rAn:[.53,.90]},
-    finish:{head:[.46,.20],lSh:[.42,.32],rSh:[.55,.28],lEl:[.34,.24],rEl:[.44,.20],lWr:[.30,.16],rWr:[.36,.14],lHip:[.44,.56],rHip:[.50,.54],lKn:[.42,.72],rKn:[.50,.70],lAn:[.40,.90],rAn:[.52,.90]}
-  }
-};
-GHOST_POSES.putting = GHOST_POSES.chip = GHOST_POSES.swing; // fallback shared visual, distinguished by amplitude scale
-const GHOST_SCALE = {swing:1, putting:0.35, chip:0.6};
-// custom uploaded ghost landmarks per shot type & phase (raw pose landmarks, screen-normalized), null until uploaded
-const customGhost = {swing:null, putting:null, chip:null};
+// video URL to actually play in the Standard Gesture panel, per shot type —
+// starts as the bundled reference clip, swapped for an object URL if the user
+// uploads their own.
+const gestureVideoUrls = {swing:"standard-swing.mp4", putting:"standard-putting.mp4", chip:"standard-chip.mp4"};
+// full frame-by-frame pose buffers per shot type ({t, landmarks}[], video-time
+// order) so the skeleton overlay can stay in sync with the playing video.
+const fullPoseBuffers = {swing:null, putting:null, chip:null};
 
 let currentShot = "swing";
 
@@ -540,74 +544,90 @@ document.querySelectorAll(".shot-tab").forEach(tab=>{
     tab.classList.add("active");
     currentShot = tab.dataset.shot;
     document.getElementById("ghostSource").textContent = customFlag[currentShot] ? "Custom uploaded reference" : "Reference video";
+    loadGhostVideo(currentShot);
     resetPhaseTrack();
   });
 });
 
-/* ---------------- Ghost canvas animation ---------------- */
-const ghostCanvas = document.getElementById("ghostCanvas");
-const ghostCtx = ghostCanvas.getContext("2d");
-function fitGhostCanvas(){
-  const rect = ghostCanvas.parentElement.getBoundingClientRect();
-  ghostCanvas.width = rect.width; ghostCanvas.height = rect.height;
-}
-window.addEventListener("resize", fitGhostCanvas);
-fitGhostCanvas();
+/* ---------------- Standard Gesture panel: plays the actual reference video,
+ * with the extracted skeleton drawn on top in sync — not an abstract animation. */
+const ghostVideo = document.getElementById("ghostVideo");
+const ghostOverlay = document.getElementById("ghostOverlay");
+const ghostOctx = ghostOverlay.getContext("2d");
 
-let ghostPhaseIdx = 0, ghostT = 0;
-function drawStick(ctx,w,h,pts,color,scaleAmp){
-  const cx=0.5, cy=0.55;
-  const sc = (v,axis)=>{
-    const base = axis==='x'? cx : cy;
-    return base + (v-base)*scaleAmp;
-  };
-  const P = {};
-  for(const k in pts){ P[k] = {x: sc(pts[k][0],'x')*w, y: sc(pts[k][1],'y')*h}; }
-  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineCap='round';
-  const bones = [["lSh","rSh"],["lSh","lEl"],["lEl","lWr"],["rSh","rEl"],["rEl","rWr"],
-    ["lSh","lHip"],["rSh","rHip"],["lHip","rHip"],["lHip","lKn"],["lKn","lAn"],["rHip","rKn"],["rKn","rAn"]];
-  bones.forEach(([a,b])=>{ ctx.beginPath(); ctx.moveTo(P[a].x,P[a].y); ctx.lineTo(P[b].x,P[b].y); ctx.stroke(); });
-  ctx.fillStyle = color;
-  Object.values(P).forEach(pt=>{ ctx.beginPath(); ctx.arc(pt.x,pt.y,3.5,0,7); ctx.fill(); });
-  // head
-  const headPt = {x: sc(pts.head[0],'x')*w, y: sc(pts.head[1],'y')*h};
-  ctx.beginPath(); ctx.arc(headPt.x,headPt.y,10,0,7); ctx.stroke();
+function fitGhostOverlay(){
+  const rect = ghostOverlay.parentElement.getBoundingClientRect();
+  ghostOverlay.width = rect.width; ghostOverlay.height = rect.height;
+}
+window.addEventListener("resize", fitGhostOverlay);
+fitGhostOverlay();
+
+function loadGhostVideo(shot){
+  const url = gestureVideoUrls[shot];
+  if(ghostVideo.dataset.shot === shot && ghostVideo.src.endsWith(url)) return; // already showing it
+  ghostVideo.dataset.shot = shot;
+  ghostVideo.src = url;
+  ghostVideo.play().catch(()=>{}); // autoplay can be blocked before any user gesture; harmless if so
+}
+loadGhostVideo(currentShot);
+
+// finds the buffered frame whose timestamp is closest to the video's current
+// playback time (buffers are in ascending time order from how they were recorded)
+function nearestFrame(buffer, t){
+  let lo=0, hi=buffer.length-1;
+  while(lo<hi){
+    const mid=(lo+hi)>>1;
+    if(buffer[mid].t<t) lo=mid+1; else hi=mid;
+  }
+  return buffer[lo];
 }
 
-function lerpPose(a,b,t){
-  const out={};
-  for(const k in a){ out[k]=[a[k][0]+(b[k][0]-a[k][0])*t, a[k][1]+(b[k][1]-a[k][1])*t]; }
-  return out;
+// The video is shown with object-fit:contain so the whole frame is visible
+// (never cropped), which means it's letterboxed inside the box rather than
+// filling it. The skeleton has to be drawn into that same letterboxed rect —
+// not the full canvas — or it drifts off the player as the video scales.
+function getContainRect(containerW, containerH, videoW, videoH){
+  if(!videoW || !videoH) return {x:0,y:0,w:containerW,h:containerH};
+  const scale = Math.min(containerW/videoW, containerH/videoH);
+  const w = videoW*scale, h = videoH*scale;
+  return {x:(containerW-w)/2, y:(containerH-h)/2, w, h};
 }
+
+let showGhostVideo=true, showGhostSkeleton=true;
+const toggleGhostVideoBtn = document.getElementById("toggleGhostVideo");
+const toggleGhostSkeletonBtn = document.getElementById("toggleGhostSkeleton");
+function updateGhostToggleUI(){
+  toggleGhostVideoBtn.classList.toggle("on", showGhostVideo);
+  toggleGhostSkeletonBtn.classList.toggle("on", showGhostSkeleton);
+  ghostVideo.style.visibility = showGhostVideo ? "visible" : "hidden";
+}
+toggleGhostVideoBtn.addEventListener("click", ()=>{
+  if(showGhostVideo && !showGhostSkeleton) return; // keep at least one layer visible
+  showGhostVideo = !showGhostVideo;
+  updateGhostToggleUI();
+});
+toggleGhostSkeletonBtn.addEventListener("click", ()=>{
+  if(showGhostSkeleton && !showGhostVideo) return; // keep at least one layer visible
+  showGhostSkeleton = !showGhostSkeleton;
+  updateGhostToggleUI();
+});
+updateGhostToggleUI();
 
 function ghostLoop(){
-  ghostT += 0.012;
-  if(ghostT>=1){ ghostT=0; ghostPhaseIdx=(ghostPhaseIdx+1)%PHASES.length; }
-  const w=ghostCanvas.width, h=ghostCanvas.height;
-  ghostCtx.clearRect(0,0,w,h);
-  // vertical guide
-  ghostCtx.strokeStyle="rgba(255,255,255,0.05)"; ghostCtx.lineWidth=1;
-  ghostCtx.beginPath(); ghostCtx.moveTo(w*0.5,0); ghostCtx.lineTo(w*0.5,h); ghostCtx.stroke();
-
-  const source = customGhost[currentShot];
-  let curr,next;
-  if(source){
-    curr = source[PHASES[ghostPhaseIdx]] || source[PHASES[0]];
-    next = source[PHASES[(ghostPhaseIdx+1)%PHASES.length]] || curr;
-    drawStick(ghostCtx,w,h,lerpNorm(curr,next,ghostT),"#e6c789",1);
-  } else {
-    const base = GHOST_POSES.swing;
-    curr = base[PHASES[ghostPhaseIdx]];
-    next = base[PHASES[(ghostPhaseIdx+1)%PHASES.length]];
-    drawStick(ghostCtx,w,h,lerpPose(curr,next,ghostT),"#e6c789",GHOST_SCALE[currentShot]);
+  const w=ghostOverlay.width, h=ghostOverlay.height;
+  ghostOctx.clearRect(0,0,w,h);
+  const buffer = fullPoseBuffers[currentShot];
+  if(showGhostSkeleton && buffer && buffer.length && !ghostVideo.paused){
+    const frame = nearestFrame(buffer, ghostVideo.currentTime);
+    if(frame){
+      const rect = getContainRect(w, h, ghostVideo.videoWidth, ghostVideo.videoHeight);
+      ghostOctx.save();
+      ghostOctx.translate(rect.x, rect.y);
+      drawSkeletonOn(ghostOctx, rect.w, rect.h, frame.landmarks);
+      ghostOctx.restore();
+    }
   }
-  document.getElementById("ghostPhaseLabel").textContent = PHASES[ghostPhaseIdx].toUpperCase();
   requestAnimationFrame(ghostLoop);
-}
-function lerpNorm(a,b,t){
-  const out={};
-  for(const k in a){ out[k]=[a[k][0]+(b[k][0]-a[k][0])*t, a[k][1]+(b[k][1]-a[k][1])*t]; }
-  return out;
 }
 requestAnimationFrame(ghostLoop);
 
@@ -1028,7 +1048,7 @@ function recordFrameLoop(){
   rctx.save();
   rctx.translate(w,0); rctx.scale(-1,1); // mirror to match the live selfie-style view
   rctx.drawImage(video,0,0,w,h);
-  if(lastLM) drawSkeletonOn(rctx,w,h,lastLM);
+  if(lastLM){ drawSkeletonOn(rctx,w,h,lastLM); }
   if(pathVisible && pathTrail.length>1) drawPathTrail(rctx,w,h,pathTrail);
   rctx.restore();
   requestAnimationFrame(recordFrameLoop);
@@ -1305,18 +1325,11 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel, targetShot){
   standards[targetShot] = newTarget;
   if(sourceLabel === "upload") customFlag[targetShot] = true;
 
-  const toGhostPts = (lm)=>({
-    head:[lm[L.nose].x,lm[L.nose].y],
-    lSh:[lm[L.lShoulder].x,lm[L.lShoulder].y], rSh:[lm[L.rShoulder].x,lm[L.rShoulder].y],
-    lEl:[lm[L.lElbow].x,lm[L.lElbow].y], rEl:[lm[L.rElbow].x,lm[L.rElbow].y],
-    lWr:[lm[L.lWrist].x,lm[L.lWrist].y], rWr:[lm[L.rWrist].x,lm[L.rWrist].y],
-    lHip:[lm[L.lHip].x,lm[L.lHip].y], rHip:[lm[L.rHip].x,lm[L.rHip].y],
-    lKn:[lm[L.lKnee].x,lm[L.lKnee].y], rKn:[lm[L.rKnee].x,lm[L.rKnee].y],
-    lAn:[lm[L.lAnkle].x,lm[L.lAnkle].y], rAn:[lm[L.rAnkle].x,lm[L.rAnkle].y]
-  });
-  const ghostSet={};
-  PHASES.forEach(p=>{ ghostSet[p]=toGhostPts(phasesLM[p]); });
-  customGhost[targetShot] = ghostSet;
+  // keep the full frame-by-frame buffer so the Standard Gesture panel can play
+  // the actual reference video with the skeleton drawn on top, in sync
+  fullPoseBuffers[targetShot] = buffer;
+  gestureVideoUrls[targetShot] = srcUrl;
+  if(targetShot === currentShot) loadGhostVideo(targetShot);
 
   if(targetShot === currentShot){
     document.getElementById("ghostSource").textContent = sourceLabel === "upload" ? "Custom uploaded reference" : "Reference video";
@@ -1331,7 +1344,7 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel, targetShot){
 /* ---------------- Built-in standard gestures: extracted from your reference
  * videos on first load, the same way an uploaded gesture is processed — no
  * hand-typed numbers. Runs once the pose model is ready; each shot type's
- * ghost animation switches over to the real extracted skeleton as soon as its
+ * skeleton overlay switches over to the real extracted skeleton as soon as its
  * clip finishes analyzing (a few seconds each, run one after another). */
 const BUILTIN_GESTURE_VIDEOS = { swing:"standard-swing.mp4", putting:"standard-putting.mp4", chip:"standard-chip.mp4" };
 async function loadBuiltinStandards(){
