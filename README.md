@@ -71,10 +71,12 @@ phone is connected, it falls back to tracking your hands with the camera
 alone.
 
 When the swing is done, a results popup appears, laid out in three parts: your
-match score at the top, a smoothly-animated skeleton comparison on the left
-that morphs through address → top → impact → finish (your skeleton in gold
-over the reference skeleton in green), coaching advice on the right, and all
-the numeric swing metrics along the bottom.
+match score at the top, an animated skeleton comparison on the left, coaching
+advice on the right, and all the numeric swing metrics along the bottom. The
+comparison plays your full recorded swing motion on a loop — every frame,
+not just a handful of snapshots — with your skeleton in gold over the
+reference skeleton in green, and a label showing roughly which part of the
+swing (address→top, top→impact, impact→finish) is playing.
 
 Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
 Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your

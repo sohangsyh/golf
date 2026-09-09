@@ -879,57 +879,108 @@ function fitMatchCompareCanvas(){
 window.addEventListener("resize", fitMatchCompareCanvas);
 fitMatchCompareCanvas();
 
-// Smoothly interpolate between two pose-landmark arrays (position only —
-// this is just for the little comparison animation, not real physics).
-function lerpPose(a, b, t){
-  if(!a) return b; if(!b) return a;
-  return a.map((p,i)=>{
-    const q = b[i] || p;
-    return { x: p.x+(q.x-p.x)*t, y: p.y+(q.y-p.y)*t, z: p.z, visibility: p.visibility };
-  });
+// Figures out roughly which part of the swing a given buffer-time falls in,
+// using the same wrist-height heuristic as segmentPhases — just returning
+// timestamps instead of landmarks, so the full playback loop below can label
+// what's currently on screen without needing to re-run the whole analysis.
+function segmentPhaseTimes(buffer){
+  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+  const n = buffer.length;
+  let topIdx=0, minY=Infinity;
+  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
+  let impactIdx=topIdx, bestDelta=-Infinity;
+  for(let i=topIdx+1;i<n;i++){ const delta=wristY[i]-wristY[i-1]; if(delta>bestDelta){bestDelta=delta; impactIdx=i;} }
+  const finishIdx=n-1;
+  return {
+    top: buffer[Math.max(topIdx,1)].t,
+    impact: buffer[Math.min(Math.max(impactIdx,topIdx+1),n-1)].t,
+    finish: buffer[finishIdx].t
+  };
 }
 
-let matchCompareUser=null, matchCompareShot=null, matchComparePhaseIdx=0, matchComparePhaseStart=0;
-const MATCH_HOLD_MS = 650;   // how long each phase pose is held, fully formed
-const MATCH_TWEEN_MS = 550;  // how long the smooth morph to the next phase takes
-function startMatchCompare(userPhasesLM, shot){
-  matchCompareUser = userPhasesLM;
+// The comparison animation now plays back the FULL recorded swing frame by
+// frame (not just 4 static address/top/impact/finish poses stitched
+// together) — that's what was reading as "only 4 steps" and feeling jerky.
+// Your real buffer and the reference video's real buffer each loop over
+// their own actual duration, sampled with nearestFrame() every animation
+// frame, so the motion is as smooth as the original recordings.
+let matchCompareUserBuf=null, matchCompareRefBuf=null, matchCompareShot=null;
+let matchCompareUserPhasesFallback=null; // used only if a full buffer isn't available for some reason
+let matchCompareUserT0=0, matchCompareUserDur=1600;
+let matchCompareRefT0=0, matchCompareRefDur=1.6;
+let matchComparePhaseTimes=null;
+let matchCompareLoopStart=0, matchCompareCycleMs=1600;
+
+function startMatchCompare(userBuffer, shot, userPhasesLM){
+  matchCompareUserBuf = (userBuffer && userBuffer.length>=2) ? userBuffer : null;
+  matchCompareRefBuf = (fullPoseBuffers[shot] && fullPoseBuffers[shot].length>=2) ? fullPoseBuffers[shot] : null;
   matchCompareShot = shot;
-  matchComparePhaseIdx = 0;
-  matchComparePhaseStart = performance.now();
+  matchCompareUserPhasesFallback = userPhasesLM;
+
+  if(matchCompareUserBuf){
+    matchCompareUserT0 = matchCompareUserBuf[0].t;
+    matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
+    matchComparePhaseTimes = segmentPhaseTimes(matchCompareUserBuf);
+  } else {
+    matchCompareUserDur = 1600;
+    matchComparePhaseTimes = null;
+  }
+  if(matchCompareRefBuf){
+    matchCompareRefT0 = matchCompareRefBuf[0].t;
+    matchCompareRefDur = Math.max(0.3, matchCompareRefBuf[matchCompareRefBuf.length-1].t - matchCompareRefT0);
+  } else {
+    matchCompareRefT0 = 0; matchCompareRefDur = 1.6;
+  }
+  matchCompareCycleMs = Math.max(matchCompareUserDur, 900);
+  matchCompareLoopStart = performance.now();
   fitMatchCompareCanvas(); // modal was hidden (0x0) until now — measure it for real
 }
 
 function matchCompareLoop(){
-  if(matchCompareUser && !matchOverlay.classList.contains("hidden")){
+  const haveAnything = matchCompareUserBuf || matchCompareUserPhasesFallback;
+  if(haveAnything && !matchOverlay.classList.contains("hidden")){
     const w=matchCompareCanvas.width, h=matchCompareCanvas.height;
-    const now = performance.now();
-    const cycle = MATCH_HOLD_MS + MATCH_TWEEN_MS;
-    let elapsed = now - matchComparePhaseStart;
-    if(elapsed > cycle){
-      matchComparePhaseIdx = (matchComparePhaseIdx+1)%PHASES.length;
-      matchComparePhaseStart = now;
-      elapsed = 0;
-    }
-    const phase = PHASES[matchComparePhaseIdx];
-    const nextPhase = PHASES[(matchComparePhaseIdx+1)%PHASES.length];
-    const tweenT = elapsed <= MATCH_HOLD_MS ? 0 : Math.min(1, (elapsed-MATCH_HOLD_MS)/MATCH_TWEEN_MS);
-    // ease in/out so the morph doesn't feel mechanical
-    const eased = tweenT<0.5 ? 2*tweenT*tweenT : 1-Math.pow(-2*tweenT+2,2)/2;
-
     matchCompareCtx.clearRect(0,0,w,h);
-    document.getElementById("matchPhaseLabel").textContent =
-      (tweenT>0 ? nextPhase : phase).toUpperCase();
+    const now = performance.now();
+    const elapsed = (now - matchCompareLoopStart) % matchCompareCycleMs;
+    const p = elapsed / matchCompareCycleMs; // 0..1 progress through one full loop of your swing
 
-    const refSet = referencePhaseLandmarks[matchCompareShot];
-    if(refSet && refSet[phase]){
-      const refPose = tweenT>0 && refSet[nextPhase] ? lerpPose(refSet[phase], refSet[nextPhase], eased) : refSet[phase];
-      const refNorm = normalizeForCompare(refPose, 0.5, 0.55, 0.22);
+    let userLM=null, refLM=null, labelPhase="";
+    if(matchCompareUserBuf){
+      const userT = matchCompareUserT0 + p*matchCompareUserDur;
+      const f = nearestFrame(matchCompareUserBuf, userT);
+      userLM = f && f.landmarks;
+      if(matchComparePhaseTimes){
+        if(userT < matchComparePhaseTimes.top) labelPhase = "Address → Top";
+        else if(userT < matchComparePhaseTimes.impact) labelPhase = "Top → Impact";
+        else if(userT < matchComparePhaseTimes.finish) labelPhase = "Impact → Finish";
+        else labelPhase = "Finish";
+      }
+    } else {
+      const idx = Math.min(PHASES.length-1, Math.floor(p*PHASES.length));
+      userLM = matchCompareUserPhasesFallback[PHASES[idx]];
+      labelPhase = PHASES[idx].toUpperCase();
+    }
+
+    if(matchCompareRefBuf){
+      const refT = matchCompareRefT0 + p*matchCompareRefDur;
+      const rf = nearestFrame(matchCompareRefBuf, refT);
+      refLM = rf && rf.landmarks;
+    } else {
+      const refSet = referencePhaseLandmarks[matchCompareShot];
+      if(refSet){
+        const idx = Math.min(PHASES.length-1, Math.floor(p*PHASES.length));
+        refLM = refSet[PHASES[idx]];
+      }
+    }
+
+    document.getElementById("matchPhaseLabel").textContent = labelPhase;
+    if(refLM){
+      const refNorm = normalizeForCompare(refLM, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, refNorm, "rgba(46,156,120,0.85)", "#2e9c78");
     }
-    if(matchCompareUser[phase]){
-      const userPose = tweenT>0 && matchCompareUser[nextPhase] ? lerpPose(matchCompareUser[phase], matchCompareUser[nextPhase], eased) : matchCompareUser[phase];
-      const userNorm = normalizeForCompare(userPose, 0.5, 0.55, 0.22);
+    if(userLM){
+      const userNorm = normalizeForCompare(userLM, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, userNorm, "rgba(230,199,137,0.9)", "#e6c789");
     }
   }
@@ -1476,12 +1527,12 @@ function analyzeAndScore(buffer, shot){
   deviations.sort((a,b)=>b.absDiff-a.absDiff);
   const sensorMetrics = computeSensorMetrics(buffer, window.motionBuffer);
 
-  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData, sensorMetrics, phasesLM, shot), PHASES.length*180+150);
+  setTimeout(()=>renderResults(overall, deviations.slice(0,4), barData, sensorMetrics, phasesLM, shot, buffer), PHASES.length*180+150);
 }
 
-function renderResults(overall, topDeviations, barData, sensorMetrics, userPhasesLM, shot){
+function renderResults(overall, topDeviations, barData, sensorMetrics, userPhasesLM, shot, fullUserBuffer){
   matchOverlay.classList.remove("hidden");
-  startMatchCompare(userPhasesLM, shot);
+  startMatchCompare(fullUserBuffer, shot, userPhasesLM);
   const circle = document.getElementById("scoreCircle");
   const circumference = 2*Math.PI*46;
   const offset = circumference - (overall/100)*circumference;
