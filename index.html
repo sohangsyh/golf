@@ -1057,36 +1057,52 @@ window.motionBuffer=[];
 // forever. It's anchored to the hands' on-screen address position (from the
 // camera) so it still overlays correctly on the golfer, but the actual
 // *shape* of the path is driven entirely by the phone's own sensor data.
-let sensorPathTrail=[];
+let sensorRawTrail=[];           // raw double-integrated points, unscaled — magnitude is meaningless on its own
 let sensorAnchor=null;           // {x,y} normalized video-frame coords, set once at address
 let sensorVX=0, sensorVY=0, sensorPX=0, sensorPY=0, sensorGX=0, sensorGY=0, sensorLastT=null;
-const SENSOR_PATH_SCALE=0.045;   // tuned so a real swing's arc fills the frame reasonably
+// Time constants (seconds), not raw per-sample multipliers — a per-sample
+// multiplier like *0.9 decays almost to zero within a few hundred ms at a
+// phone's ~50-60Hz sample rate, which was the bug that made the path
+// invisible: the double-integrated position never had a chance to build up
+// before the damping erased it. These are keyed to real time instead.
+const SENSOR_GRAVITY_TAU=1.2;    // slow low-pass stand-in for gravity/orientation bias, not the swing itself
+const SENSOR_VELOCITY_TAU=0.9;   // velocity leaks away slowly so it survives a full ~1s swing but doesn't drift forever
+const SENSOR_PATH_SPREAD=0.16;   // normalized frame units the path is auto-scaled to span from the anchor
 function resetSensorPath(){
-  sensorPathTrail=[]; sensorAnchor=null;
+  sensorRawTrail=[]; sensorAnchor=null;
   sensorVX=0; sensorVY=0; sensorPX=0; sensorPY=0; sensorGX=0; sensorGY=0; sensorLastT=null;
 }
 function integrateSensorPath(d){
   const now = performance.now();
   const dt = sensorLastT!=null ? Math.min(0.05, Math.max(0.001,(now-sensorLastT)/1000)) : 0.02;
   sensorLastT = now;
-  // running low-pass estimate acts as a stand-in for gravity/orientation bias
-  // (we don't have a full orientation filter) — subtracting it out leaves
+  // low-pass estimate acts as a stand-in for gravity/orientation bias (we
+  // don't have a full orientation filter) — subtracting it out leaves
   // roughly the "swing" component of the acceleration on each axis
-  sensorGX = sensorGX*0.9 + (d.ax||0)*0.1;
-  sensorGY = sensorGY*0.9 + (d.ay||0)*0.1;
+  const gAlpha = 1 - Math.exp(-dt/SENSOR_GRAVITY_TAU);
+  sensorGX += ((d.ax||0) - sensorGX) * gAlpha;
+  sensorGY += ((d.ay||0) - sensorGY) * gAlpha;
   const linAX = (d.ax||0) - sensorGX;
   const linAY = (d.ay||0) - sensorGY;
-  sensorVX = (sensorVX + linAX*dt) * 0.90; // damping keeps the double-integration from drifting away
-  sensorVY = (sensorVY + linAY*dt) * 0.90;
+  const vDecay = Math.exp(-dt/SENSOR_VELOCITY_TAU);
+  sensorVX = sensorVX*vDecay + linAX*dt;
+  sensorVY = sensorVY*vDecay + linAY*dt;
   sensorPX += sensorVX*dt;
   sensorPY += sensorVY*dt;
-  if(sensorAnchor){
-    sensorPathTrail.push({
-      x: sensorAnchor.x + sensorPX*SENSOR_PATH_SCALE,
-      y: sensorAnchor.y - sensorPY*SENSOR_PATH_SCALE
-    });
-    if(sensorPathTrail.length>500) sensorPathTrail.shift();
-  }
+  sensorRawTrail.push({x:sensorPX, y:sensorPY});
+  if(sensorRawTrail.length>600) sensorRawTrail.shift();
+}
+// Turns the raw integrated trail into on-screen points, auto-scaled to a
+// visible spread regardless of how big or small the phone's actual
+// acceleration numbers turn out to be — anchored at the hands' address
+// position so it still overlays correctly on the golfer in frame.
+function sensorDisplayPath(){
+  if(!sensorAnchor || sensorRawTrail.length<2) return [];
+  let maxR=0;
+  for(const p of sensorRawTrail){ const r=Math.hypot(p.x,p.y); if(r>maxR) maxR=r; }
+  if(maxR<1e-6) return [];
+  const scale = SENSOR_PATH_SPREAD/maxR;
+  return sensorRawTrail.map(p=>({x: sensorAnchor.x + p.x*scale, y: sensorAnchor.y - p.y*scale}));
 }
 // what's actually drawn each frame — Club Sensor path when a phone is paired
 // and streaming, otherwise the camera hand-tracked path as a fallback
@@ -1235,7 +1251,8 @@ function trackLoop(){
       }
       // prefer the Club Sensor (phone) path once it has real samples; fall
       // back to the camera hand-tracked path when no phone is paired
-      displayPathTrail = (isPaired && sensorPathTrail.length>1) ? sensorPathTrail : pathTrail;
+      const sensorPath = isPaired ? sensorDisplayPath() : [];
+      displayPathTrail = sensorPath.length>1 ? sensorPath : pathTrail;
       if(pathVisible && displayPathTrail.length>1){
         const rect = getCoverRect(overlay.width, overlay.height, video.videoWidth, video.videoHeight);
         octx.save(); octx.translate(rect.x, rect.y);
