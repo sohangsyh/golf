@@ -286,8 +286,15 @@
     border:1px solid var(--panel-border);border-radius:22px;padding:32px 28px 28px;
     box-shadow:0 20px 60px rgba(0,0,0,.5);margin:auto;
   }
-  .match-body{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px;margin-top:22px;align-items:stretch;}
-  @media (max-width:640px){ .match-body{grid-template-columns:1fr;} }
+  /* Everything below the score used to stack in one long column (skeleton,
+     then advice, then all the metrics), which made the popup tall and forced
+     a lot of scrolling. Now the skeleton compare stays put on the left while
+     advice + metrics + the download link all live in a right-hand column
+     that scrolls independently — so the popup itself needs far less
+     scrolling, and the left side (what you're actually comparing) never
+     scrolls out of view while you read the numbers on the right. */
+  .match-body{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px;margin-top:22px;align-items:start;}
+  @media (max-width:640px){ .match-body{grid-template-columns:1fr;} .match-advice-col{max-height:none !important;overflow-y:visible !important;} }
   .match-compare-wrap{
     position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;
     background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
@@ -300,10 +307,12 @@
   .match-legend .dot.you{background:#e6c789;}
   .match-legend .dot.ref{margin-left:10px;background:#2e9c78;}
   .match-legend .dot.path{margin-left:10px;background:#ff2d2d;}
-  .match-advice-col{display:flex;flex-direction:column;min-height:0;}
+  .match-advice-col{
+    display:flex;flex-direction:column;min-height:0;
+    max-height:min(70vh, 560px);overflow-y:auto;padding-right:6px;
+  }
   .match-col-title{font-family:'Playfair Display',serif;font-size:13px;color:var(--text-mid);margin-bottom:10px;}
-  .match-advice-col .advice-list{margin-top:0;flex:1;overflow-y:auto;max-height:100%;}
-  .match-bottom{margin-top:22px;}
+  .match-advice-col .advice-list{margin-top:0;}
   .qr-status.paired{color:var(--emerald-bright);}
 
   .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
@@ -463,24 +472,23 @@
       <div class="match-advice-col">
         <div class="match-col-title">Coaching Notes</div>
         <ul class="advice-list" id="adviceList"></ul>
-      </div>
-    </div>
 
-    <div class="match-bottom">
-      <div class="swing-metrics" id="swingMetrics" style="display:none;">
-        <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
-        <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
-        <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
-        <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
-        <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
-        <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
-      </div>
-      <p class="small-note" id="metricsNote" style="display:none;">
-        Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
-      </p>
-      <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
+        <div class="swing-metrics" id="swingMetrics" style="display:none;">
+          <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
+          <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
+          <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
+          <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
+          <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
+          <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
+        </div>
+        <p class="small-note" id="metricsNote" style="display:none;">
+          Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
+        </p>
+        <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
 
-      <div class="metric-bars" id="metricBars"></div>
+        <div class="match-col-title" style="margin-top:16px;">Phase-by-Phase Match</div>
+        <div class="metric-bars" id="metricBars"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1064,6 +1072,7 @@ let matchCompareUserBounds=null, matchCompareRefBounds=null;
 let matchCompareMirrorUser=false;
 let matchCompareMirrorRef=false; // mirrors the reference too, when Right-Handed mode is on
 let matchComparePathTransform=null;
+let matchComparePathSource=null; // snapshot of displayPathTrail, timestamped, for phase-synced reveal
 let matchCompareLoopStart=0, matchCompareCycleMs=1600;
 
 function startMatchCompare(userBuffer, shot, userPhasesLM){
@@ -1124,6 +1133,12 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   if(userAddressLM){
     matchComparePathTransform = computeFixedTransform(matchCompareMirrorUser ? mirrorLandmarks(userAddressLM) : userAddressLM);
   }
+  // snapshot now — displayPathTrail keeps re-evaluating every camera frame
+  // (harmlessly, to the same content) until the next countdown starts, but
+  // we want a fixed reference to reveal progressively against userT below
+  matchComparePathSource = (displayPathTrail && displayPathTrail.length>1 && displayPathTrail[0].t!=null)
+    ? displayPathTrail.slice()
+    : null;
 
   matchCompareCycleMs = Math.max(matchCompareUserDur, 900);
   matchCompareLoopStart = performance.now();
@@ -1139,9 +1154,9 @@ function matchCompareLoop(){
     const elapsed = (now - matchCompareLoopStart) % matchCompareCycleMs;
     const p = elapsed / matchCompareCycleMs; // 0..1 progress through one full loop of your swing
 
-    let userLM=null, refLM=null, labelPhase="";
+    let userLM=null, refLM=null, labelPhase="", userT=null;
     if(matchCompareUserBuf){
-      const userT = matchCompareUserT0 + p*matchCompareUserDur;
+      userT = matchCompareUserT0 + p*matchCompareUserDur;
       const f = nearestFrame(matchCompareUserBuf, userT);
       userLM = f && f.landmarks;
       if(matchComparePhaseTimes){
@@ -1173,15 +1188,23 @@ function matchCompareLoop(){
 
     document.getElementById("matchPhaseLabel").textContent = labelPhase;
 
-    // swing path first (underneath), so the skeletons stay readable on top —
-    // it's drawn from the same recording that just finished, transformed
-    // into the same fixed, address-anchored frame the skeletons use
-    if(matchComparePathTransform && displayPathTrail && displayPathTrail.length>1){
-      const trail = displayPathTrail.map(pt=>{
-        const mp = matchCompareMirrorUser ? {x:1-pt.x, y:pt.y} : pt;
-        return applyFixedTransform(mp, matchComparePathTransform, 0.5, 0.55);
-      });
-      drawPathTrail(matchCompareCtx, w, h, trail);
+    // Swing path first (underneath), so the skeletons stay readable on top.
+    // Rather than dumping the whole recorded path on screen at once (which
+    // is what made it feel out of sync — it wasn't tied to the animation's
+    // own timing at all), it's revealed progressively using the exact same
+    // userT that drives the skeletons: only the portion of the path
+    // recorded up through "right now" in the phase-locked playback is
+    // drawn, so it grows address→top, then top→impact, then impact→finish,
+    // in step with the phase label and the skeleton animation above it.
+    if(matchComparePathTransform && matchComparePathSource && userT!=null){
+      const visible = matchComparePathSource.filter(pt => pt.t <= userT);
+      if(visible.length>1){
+        const trail = visible.map(pt=>{
+          const mp = matchCompareMirrorUser ? {x:1-pt.x, y:pt.y} : pt;
+          return applyFixedTransform(mp, matchComparePathTransform, 0.5, 0.55);
+        });
+        drawPathTrail(matchCompareCtx, w, h, trail);
+      }
     }
 
     if(refLM){
@@ -1390,7 +1413,11 @@ function integrateSensorPath(d){
   sensorVY = sensorVY*vDecay + linAY*dt;
   sensorPX += sensorVX*dt;
   sensorPY += sensorVY*dt;
-  sensorRawTrail.push({x:sensorPX, y:sensorPY});
+  // t uses the SAME performance.now() clock as liveBuffer/phase timestamps,
+  // so the results popup can later split this trail by phase (address→top,
+  // top→impact, impact→finish) and reveal it in sync with the comparison
+  // animation instead of just dumping the whole path on screen at once.
+  sensorRawTrail.push({x:sensorPX, y:sensorPY, t:now});
   if(sensorRawTrail.length>600) sensorRawTrail.shift();
 }
 // Turns the raw integrated trail into on-screen points, auto-scaled to a
@@ -1403,7 +1430,7 @@ function sensorDisplayPath(){
   for(const p of sensorRawTrail){ const r=Math.hypot(p.x,p.y); if(r>maxR) maxR=r; }
   if(maxR<1e-6) return [];
   const scale = SENSOR_PATH_SPREAD/maxR;
-  return sensorRawTrail.map(p=>({x: sensorAnchor.x + p.x*scale, y: sensorAnchor.y - p.y*scale}));
+  return sensorRawTrail.map(p=>({x: sensorAnchor.x + p.x*scale, y: sensorAnchor.y - p.y*scale, t:p.t}));
 }
 // what's actually drawn each frame — Club Sensor path when a phone is paired
 // and streaming, otherwise the camera hand-tracked path as a fallback
@@ -1578,10 +1605,11 @@ function trackLoop(){
       lastLM = lm;
       drawLiveSkeleton(lm);
       if(recording){
-        liveBuffer.push({t:performance.now(), landmarks:lm});
+        const nowT = performance.now();
+        liveBuffer.push({t:nowT, landmarks:lm});
         // camera-tracked fallback path (hands position) — always collected
         // so there's still a path if no Club Sensor is paired
-        const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
+        const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2, t:nowT};
         pathTrail.push(wristMid);
         // anchor the sensor-derived path to the hands' position the moment
         // recording starts (address), so its shape overlays on the golfer

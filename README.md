@@ -133,6 +133,21 @@ versus the reference's (now-possibly-mirrored) direction, and flips your
 skeleton and swing path to match if needed — so the comparison always reads
 as the same movement, whichever handedness mode you're in.
 
+## Results layout and the swing path
+
+The swing path in the results popup now grows in step with the phase-locked
+comparison animation instead of appearing all at once — it's split by
+address→top, top→impact, and impact→finish (using each point's actual
+recording timestamp) and revealed in that same sequence as the skeletons
+play through those phases, so the path and the "ADDRESS → TOP" / "TOP →
+IMPACT" / "IMPACT → FINISH" label above it are always showing the same
+moment of the swing.
+
+Coaching notes, the metric bars, and the download link now live in a
+right-hand column next to the skeleton comparison (instead of stacked below
+everything), so the popup needs far less scrolling — the skeleton view stays
+in place while that column scrolls independently if there's a lot to show.
+
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:
 the live camera view is always shown mirrored (a selfie view, so it feels
