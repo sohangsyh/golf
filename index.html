@@ -979,16 +979,32 @@ function mapPhaseTime(t, srcBounds, dstBounds){
 
 // The live camera is shown mirrored (a selfie view, so it feels natural
 // while you're swinging), but the raw landmarks recorded from it are NOT
-// mirrored — they're in the camera's true left/right, same as the reference
-// videos. In principle that already lines the two up. In practice, though,
-// whether a given reference clip's own left/right ends up matching depends
-// on how it was originally filmed (a phone's front camera often saves a
-// "selfie" video already mirrored). Rather than assume, we check: compare
-// which way each skeleton's shoulders point at address, and if the two
-// disagree, mirror the user's skeleton (and its swing path) so they overlay
-// correctly instead of looking like opposite-handed swings.
+// mirrored — they're in the camera's true left/right. Whether that ends up
+// matching a given reference clip depends on how the clip was filmed AND on
+// handedness: a reference video demonstrating a swing toward screen-right is
+// a mirror image for a right-handed player copying it left-handed-style vs.
+// a left-handed player copying it naturally. Rather than assume, we detect
+// which screen-direction each swing actually travels and mirror the user's
+// skeleton (and swing path) to match the reference if they disagree — so
+// the two always read as the same swing, regardless of the source clip's
+// orientation or which hand the player swings with.
 function mirrorLandmarks(lm){ return lm.map(p=>({x:1-p.x, y:p.y, z:p.z, visibility:p.visibility})); }
+function wristMidX(lm){ return (lm[L.lWrist].x + lm[L.rWrist].x) / 2; }
+// Address-only shoulder-line orientation — usable as a fallback, but weak on
+// its own: in a proper side-on golf stance the shoulders are nearly
+// in line with the camera, so their on-screen x-difference is small and
+// noise-prone right when it matters most.
 function shoulderOrientation(lm){ return Math.sign(lm[L.rShoulder].x - lm[L.lShoulder].x) || 1; }
+// The much more reliable signal: which screen-direction the hands actually
+// travel from address to the top of the backswing. That horizontal motion
+// is large and clear for a full swing (less so for putting/chipping, where
+// this can come back inconclusive — 0 — and the caller should fall back to
+// shoulderOrientation instead).
+function swingDirection(addressLM, topLM){
+  if(!addressLM || !topLM) return 0;
+  const d = wristMidX(topLM) - wristMidX(addressLM);
+  return Math.abs(d) > 0.02 ? Math.sign(d) : 0;
+}
 
 // A FIXED (not per-frame) recentre/rescale transform, computed once from the
 // address pose, for drawing the swing path — the path needs to stay put in
@@ -1029,16 +1045,9 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   matchCompareMirrorUser = false;
   matchComparePathTransform = null;
 
-  // orientation check, using each buffer's own address (first) frame
-  const userAddressLM = matchCompareUserBuf ? matchCompareUserBuf[0].landmarks : (userPhasesLM && userPhasesLM.address);
-  const refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
-  if(userAddressLM && refAddressLM){
-    matchCompareMirrorUser = shoulderOrientation(userAddressLM) !== shoulderOrientation(refAddressLM);
-  }
-  if(userAddressLM){
-    matchComparePathTransform = computeFixedTransform(matchCompareMirrorUser ? mirrorLandmarks(userAddressLM) : userAddressLM);
-  }
-
+  // phase timing first (both address/top landmarks and phase boundaries come
+  // from this), so the direction check below can use it
+  let refPhaseTimes = null;
   if(matchCompareUserBuf){
     matchCompareUserT0 = matchCompareUserBuf[0].t;
     matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
@@ -1049,9 +1058,34 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
     matchComparePhaseTimes = null;
   }
   if(matchCompareRefBuf){
-    const refPhaseTimes = segmentPhaseTimes(matchCompareRefBuf);
+    refPhaseTimes = segmentPhaseTimes(matchCompareRefBuf);
     matchCompareRefBounds = phaseBoundaries(matchCompareRefBuf, refPhaseTimes);
   }
+
+  // orientation/handedness check
+  const userAddressLM = matchCompareUserBuf ? matchCompareUserBuf[0].landmarks : (userPhasesLM && userPhasesLM.address);
+  const refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
+  const userTopLM = matchCompareUserBuf && matchComparePhaseTimes
+    ? (nearestFrame(matchCompareUserBuf, matchComparePhaseTimes.top) || {}).landmarks
+    : (userPhasesLM && userPhasesLM.top);
+  const refTopLM = matchCompareRefBuf && refPhaseTimes
+    ? (nearestFrame(matchCompareRefBuf, refPhaseTimes.top) || {}).landmarks
+    : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].top);
+
+  const userDir = swingDirection(userAddressLM, userTopLM);
+  const refDir = swingDirection(refAddressLM, refTopLM);
+  if(userDir!==0 && refDir!==0){
+    // reliable signal: which way the hands actually travel on the backswing
+    matchCompareMirrorUser = userDir !== refDir;
+  } else if(userAddressLM && refAddressLM){
+    // fallback for shots with little backswing travel (putting/chip) —
+    // weaker, but better than nothing
+    matchCompareMirrorUser = shoulderOrientation(userAddressLM) !== shoulderOrientation(refAddressLM);
+  }
+  if(userAddressLM){
+    matchComparePathTransform = computeFixedTransform(matchCompareMirrorUser ? mirrorLandmarks(userAddressLM) : userAddressLM);
+  }
+
   matchCompareCycleMs = Math.max(matchCompareUserDur, 900);
   matchCompareLoopStart = performance.now();
   fitMatchCompareCanvas(); // modal was hidden (0x0) until now — measure it for real
@@ -1286,8 +1320,14 @@ let sensorVX=0, sensorVY=0, sensorPX=0, sensorPY=0, sensorGX=0, sensorGY=0, sens
 // phone's ~50-60Hz sample rate, which was the bug that made the path
 // invisible: the double-integrated position never had a chance to build up
 // before the damping erased it. These are keyed to real time instead.
-const SENSOR_GRAVITY_TAU=1.2;    // slow low-pass stand-in for gravity/orientation bias, not the swing itself
-const SENSOR_VELOCITY_TAU=0.9;   // velocity leaks away slowly so it survives a full ~1s swing but doesn't drift forever
+// These were originally 1.2 / 0.9 — much slower than a golf swing itself
+// (which is over in well under a second), so the double-integrated path was
+// always lagging behind the actual motion by most of a swing's duration.
+// That's what read as "super delay". Shortened both so the path tracks the
+// swing's own timing much more closely — some drift/noise sensitivity in
+// trade, but sensorDisplayPath()'s auto-scaling already absorbs that.
+const SENSOR_GRAVITY_TAU=0.35;   // low-pass stand-in for gravity/orientation bias, not the swing itself
+const SENSOR_VELOCITY_TAU=0.35;  // velocity leaks away — long enough to hold through a swing, short enough to stay responsive
 const SENSOR_PATH_SPREAD=0.16;   // normalized frame units the path is auto-scaled to span from the anchor
 function resetSensorPath(){
   sensorRawTrail=[]; sensorAnchor=null;

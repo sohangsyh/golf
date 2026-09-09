@@ -111,6 +111,18 @@ The address box you hold your hands in is now sized to exactly match the
 stays exact if you ever restyle it) and sits a bit lower on screen than
 before, roughly where your hands fall at address.
 
+The Club Sensor swing path also used to lag noticeably behind your actual
+motion — its underlying math (turning acceleration into a position) was
+tuned with time constants slower than a golf swing itself, so the path was
+always trailing behind by close to a second. Sped that up considerably.
+
+SwingVision also now detects swing direction/handedness: it checks which
+screen-direction your hands actually travel on the backswing versus the
+reference clip's, and mirrors your skeleton (and swing path) in the results
+comparison if they don't match — so a reference video demonstrating a swing
+toward one side still compares correctly whether you swing left- or
+right-handed, instead of showing what looks like an opposite-handed swing.
+
 The results comparison also now shows your swing path (in red, same as the
 live view) laid over the skeletons, and auto-corrects a left/right mismatch:
 the live camera view is always shown mirrored (a selfie view, so it feels
