@@ -273,13 +273,15 @@
     animation:fadeIn .2s ease both;
   }
   .match-card{
-    position:relative;width:100%;max-width:460px;
+    position:relative;width:100%;max-width:720px;
     background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
     border:1px solid var(--panel-border);border-radius:22px;padding:32px 28px 28px;
     box-shadow:0 20px 60px rgba(0,0,0,.5);margin:auto;
   }
+  .match-body{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px;margin-top:22px;align-items:stretch;}
+  @media (max-width:640px){ .match-body{grid-template-columns:1fr;} }
   .match-compare-wrap{
-    position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;margin-top:22px;
+    position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;
     background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
     border:1px solid var(--panel-border);overflow:hidden;
   }
@@ -289,6 +291,10 @@
   .match-legend .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
   .match-legend .dot.you{background:#e6c789;}
   .match-legend .dot.ref{margin-left:10px;background:#2e9c78;}
+  .match-advice-col{display:flex;flex-direction:column;min-height:0;}
+  .match-col-title{font-family:'Playfair Display',serif;font-size:13px;color:var(--text-mid);margin-bottom:10px;}
+  .match-advice-col .advice-list{margin-top:0;flex:1;overflow-y:auto;max-height:100%;}
+  .match-bottom{margin-top:22px;}
   .qr-status.paired{color:var(--emerald-bright);}
 
   .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
@@ -438,28 +444,34 @@
       </div>
     </div>
 
-    <div class="match-compare-wrap">
-      <canvas id="matchCompareCanvas"></canvas>
-      <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
-      <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference</div>
+    <div class="match-body">
+      <div class="match-compare-wrap">
+        <canvas id="matchCompareCanvas"></canvas>
+        <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
+        <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference</div>
+      </div>
+      <div class="match-advice-col">
+        <div class="match-col-title">Coaching Notes</div>
+        <ul class="advice-list" id="adviceList"></ul>
+      </div>
     </div>
 
-    <ul class="advice-list" id="adviceList"></ul>
+    <div class="match-bottom">
+      <div class="swing-metrics" id="swingMetrics" style="display:none;">
+        <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
+        <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
+        <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
+        <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
+        <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
+        <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
+      </div>
+      <p class="small-note" id="metricsNote" style="display:none;">
+        Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
+      </p>
+      <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
 
-    <div class="swing-metrics" id="swingMetrics" style="display:none;">
-      <div><b id="mSwingSpeed">—</b><span>Swing Speed (mph)</span></div>
-      <div><b id="mClubSpeed">—</b><span>Club Speed (mph)</span></div>
-      <div><b id="mClubPath">—</b><span>Club Path (°)</span></div>
-      <div><b id="mAttackAngle">—</b><span>Attack Angle (°)</span></div>
-      <div><b id="mFaceAngle">—</b><span>Face Angle (°)</span></div>
-      <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
+      <div class="metric-bars" id="metricBars"></div>
     </div>
-    <p class="small-note" id="metricsNote" style="display:none;">
-      Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
-    </p>
-    <a class="btn btn-outline" id="downloadSwingLink" style="display:none;text-decoration:none;margin-top:14px;text-align:center;" download>⬇ Download Swing Video</a>
-
-    <div class="metric-bars" id="metricBars"></div>
   </div>
 </div>
 
@@ -806,7 +818,10 @@ function openPairingChannel(client) {
       phoneMsgCount++;
       const now = performance.now();
       if (now - phoneLastHz > 1000) { phHz.textContent = phoneMsgCount; phoneMsgCount = 0; phoneLastHz = now; }
-      if (window.capturingMotion) { window.motionBuffer.push({ t: performance.now(), ...d }); }
+      if (window.capturingMotion) {
+        window.motionBuffer.push({ t: performance.now(), ...d });
+        integrateSensorPath(d);
+      }
     })
     .on("broadcast", { event: "phone-left" }, () => {
       isPaired = false;
@@ -864,30 +879,59 @@ function fitMatchCompareCanvas(){
 window.addEventListener("resize", fitMatchCompareCanvas);
 fitMatchCompareCanvas();
 
-let matchCompareUser=null, matchCompareShot=null, matchComparePhaseIdx=0, matchCompareT=0;
+// Smoothly interpolate between two pose-landmark arrays (position only —
+// this is just for the little comparison animation, not real physics).
+function lerpPose(a, b, t){
+  if(!a) return b; if(!b) return a;
+  return a.map((p,i)=>{
+    const q = b[i] || p;
+    return { x: p.x+(q.x-p.x)*t, y: p.y+(q.y-p.y)*t, z: p.z, visibility: p.visibility };
+  });
+}
+
+let matchCompareUser=null, matchCompareShot=null, matchComparePhaseIdx=0, matchComparePhaseStart=0;
+const MATCH_HOLD_MS = 650;   // how long each phase pose is held, fully formed
+const MATCH_TWEEN_MS = 550;  // how long the smooth morph to the next phase takes
 function startMatchCompare(userPhasesLM, shot){
   matchCompareUser = userPhasesLM;
   matchCompareShot = shot;
   matchComparePhaseIdx = 0;
-  matchCompareT = performance.now();
+  matchComparePhaseStart = performance.now();
+  fitMatchCompareCanvas(); // modal was hidden (0x0) until now — measure it for real
 }
 
 function matchCompareLoop(){
   if(matchCompareUser && !matchOverlay.classList.contains("hidden")){
     const w=matchCompareCanvas.width, h=matchCompareCanvas.height;
     const now = performance.now();
-    if(now-matchCompareT>1100){ matchCompareT=now; matchComparePhaseIdx=(matchComparePhaseIdx+1)%PHASES.length; }
-    matchCompareCtx.clearRect(0,0,w,h);
+    const cycle = MATCH_HOLD_MS + MATCH_TWEEN_MS;
+    let elapsed = now - matchComparePhaseStart;
+    if(elapsed > cycle){
+      matchComparePhaseIdx = (matchComparePhaseIdx+1)%PHASES.length;
+      matchComparePhaseStart = now;
+      elapsed = 0;
+    }
     const phase = PHASES[matchComparePhaseIdx];
-    document.getElementById("matchPhaseLabel").textContent = phase.toUpperCase();
+    const nextPhase = PHASES[(matchComparePhaseIdx+1)%PHASES.length];
+    const tweenT = elapsed <= MATCH_HOLD_MS ? 0 : Math.min(1, (elapsed-MATCH_HOLD_MS)/MATCH_TWEEN_MS);
+    // ease in/out so the morph doesn't feel mechanical
+    const eased = tweenT<0.5 ? 2*tweenT*tweenT : 1-Math.pow(-2*tweenT+2,2)/2;
+
+    matchCompareCtx.clearRect(0,0,w,h);
+    document.getElementById("matchPhaseLabel").textContent =
+      (tweenT>0 ? nextPhase : phase).toUpperCase();
 
     const refSet = referencePhaseLandmarks[matchCompareShot];
     if(refSet && refSet[phase]){
-      const refNorm = normalizeForCompare(refSet[phase], 0.5, 0.55, 0.22);
+      const refPose = tweenT>0 && refSet[nextPhase] ? lerpPose(refSet[phase], refSet[nextPhase], eased) : refSet[phase];
+      const refNorm = normalizeForCompare(refPose, 0.5, 0.55, 0.22);
       drawSkeletonOn(matchCompareCtx, w, h, refNorm, "rgba(46,156,120,0.85)", "#2e9c78");
     }
-    const userNorm = normalizeForCompare(matchCompareUser[phase], 0.5, 0.55, 0.22);
-    drawSkeletonOn(matchCompareCtx, w, h, userNorm, "rgba(230,199,137,0.9)", "#e6c789");
+    if(matchCompareUser[phase]){
+      const userPose = tweenT>0 && matchCompareUser[nextPhase] ? lerpPose(matchCompareUser[phase], matchCompareUser[nextPhase], eased) : matchCompareUser[phase];
+      const userNorm = normalizeForCompare(userPose, 0.5, 0.55, 0.22);
+      drawSkeletonOn(matchCompareCtx, w, h, userNorm, "rgba(230,199,137,0.9)", "#e6c789");
+    }
   }
   requestAnimationFrame(matchCompareLoop);
 }
@@ -975,7 +1019,25 @@ let camRunning=false, lastVideoTime=-1;
 let liveBuffer=[]; // {t, landmarks}
 let recording=false;
 let lastLM=null;
-let pathTrail=[];
+// The raw pose model output is noisy frame-to-frame, which reads as the live
+// skeleton shaking/jittering even when you're holding still. Easing each
+// landmark toward its new position instead of snapping to it smooths that out.
+let smoothedLM=null;
+const SMOOTHING_ALPHA=0.45;
+function smoothLandmarks(raw){
+  if(!smoothedLM){ smoothedLM = raw.map(p=>({x:p.x,y:p.y,z:p.z,visibility:p.visibility})); return smoothedLM; }
+  smoothedLM = raw.map((p,i)=>{
+    const s = smoothedLM[i];
+    return {
+      x: s.x+(p.x-s.x)*SMOOTHING_ALPHA,
+      y: s.y+(p.y-s.y)*SMOOTHING_ALPHA,
+      z: (s.z!=null && p.z!=null) ? s.z+(p.z-s.z)*SMOOTHING_ALPHA : p.z,
+      visibility: p.visibility
+    };
+  });
+  return smoothedLM;
+}
+let pathTrail=[]; // camera-tracked fallback path (hands position), used when no Club Sensor is paired
 // auto-stop-on-swing-completion state: watch wrist speed to detect that a
 // swing happened and the player's hands have settled again
 let prevWristMid=null, swingPeakSeen=false, stillFrames=0, recordStartTime=0;
@@ -985,6 +1047,50 @@ let addressHoldStart=null;
 let autoTriggering=false;
 window.capturingMotion=false;
 window.motionBuffer=[];
+
+// ---- Club Sensor (phone) swing path -------------------------------------
+// The phone streams raw accelerometer + gyroscope samples, not a position —
+// there's no GPS-grade tracking on a device this small, so we derive a
+// relative swing-shape trace from the accelerometer by integrating it twice
+// (accel -> velocity -> position), with a decaying/high-passed velocity so
+// the trace settles back near the anchor point instead of drifting off
+// forever. It's anchored to the hands' on-screen address position (from the
+// camera) so it still overlays correctly on the golfer, but the actual
+// *shape* of the path is driven entirely by the phone's own sensor data.
+let sensorPathTrail=[];
+let sensorAnchor=null;           // {x,y} normalized video-frame coords, set once at address
+let sensorVX=0, sensorVY=0, sensorPX=0, sensorPY=0, sensorGX=0, sensorGY=0, sensorLastT=null;
+const SENSOR_PATH_SCALE=0.045;   // tuned so a real swing's arc fills the frame reasonably
+function resetSensorPath(){
+  sensorPathTrail=[]; sensorAnchor=null;
+  sensorVX=0; sensorVY=0; sensorPX=0; sensorPY=0; sensorGX=0; sensorGY=0; sensorLastT=null;
+}
+function integrateSensorPath(d){
+  const now = performance.now();
+  const dt = sensorLastT!=null ? Math.min(0.05, Math.max(0.001,(now-sensorLastT)/1000)) : 0.02;
+  sensorLastT = now;
+  // running low-pass estimate acts as a stand-in for gravity/orientation bias
+  // (we don't have a full orientation filter) — subtracting it out leaves
+  // roughly the "swing" component of the acceleration on each axis
+  sensorGX = sensorGX*0.9 + (d.ax||0)*0.1;
+  sensorGY = sensorGY*0.9 + (d.ay||0)*0.1;
+  const linAX = (d.ax||0) - sensorGX;
+  const linAY = (d.ay||0) - sensorGY;
+  sensorVX = (sensorVX + linAX*dt) * 0.90; // damping keeps the double-integration from drifting away
+  sensorVY = (sensorVY + linAY*dt) * 0.90;
+  sensorPX += sensorVX*dt;
+  sensorPY += sensorVY*dt;
+  if(sensorAnchor){
+    sensorPathTrail.push({
+      x: sensorAnchor.x + sensorPX*SENSOR_PATH_SCALE,
+      y: sensorAnchor.y - sensorPY*SENSOR_PATH_SCALE
+    });
+    if(sensorPathTrail.length>500) sensorPathTrail.shift();
+  }
+}
+// what's actually drawn each frame — Club Sensor path when a phone is paired
+// and streaming, otherwise the camera hand-tracked path as a fallback
+let displayPathTrail=[];
 
 // Normalized (0-1) bounds matching the small .address-zone box drawn over the
 // stage — sized just for detecting two hands together (holding a club/phone),
@@ -996,21 +1102,27 @@ document.getElementById("pathToggleBtn").addEventListener("click", (e)=>{
   e.target.textContent = "Swing Path: " + (pathVisible ? "On" : "Off");
 });
 
-function checkAddressPosition(lm){
-  const lw = lm[L.lWrist], rw = lm[L.rWrist];
-  const midX = (lw.x+rw.x)/2, midY = (lw.y+rw.y)/2;
-  const handsTogether = Math.hypot(lw.x-rw.x, lw.y-rw.y) < 0.14;
-  const inZone = midX>ADDRESS_ZONE.xMin && midX<ADDRESS_ZONE.xMax && midY>ADDRESS_ZONE.yMin && midY<ADDRESS_ZONE.yMax;
-  return handsTogether && inZone;
+// The camera video is shown with object-fit:cover (fills the box, cropping
+// whatever doesn't fit), but pose landmarks are normalized to the video's own
+// full frame — so if the actual camera stream's aspect ratio isn't exactly the
+// stage's 4:3, drawing landmarks straight against canvas width/height drifts
+// away from the visible, cropped video. This computes the same crop math the
+// browser applies, so anything drawn against it lines up with what's on screen.
+function getCoverRect(containerW, containerH, videoW, videoH){
+  if(!videoW || !videoH) return {x:0,y:0,w:containerW,h:containerH};
+  const scale = Math.max(containerW/videoW, containerH/videoH);
+  const w = videoW*scale, h = videoH*scale;
+  return {x:(containerW-w)/2, y:(containerH-h)/2, w, h};
 }
 
-// Approximates a "clubhead" point by extending past the wrists along the
-// forearm direction, so the drawn path sweeps further than just hand position.
-function clubProxy(lm){
-  const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
-  const elbowMid = {x:(lm[L.lElbow].x+lm[L.rElbow].x)/2, y:(lm[L.lElbow].y+lm[L.rElbow].y)/2};
-  const dx = wristMid.x-elbowMid.x, dy = wristMid.y-elbowMid.y;
-  return {x: wristMid.x+dx*2.0, y: wristMid.y+dy*2.0};
+function checkAddressPosition(lm){
+  const lw = lm[L.lWrist], rw = lm[L.rWrist];
+  const handsTogether = Math.hypot(lw.x-rw.x, lw.y-rw.y) < 0.14;
+  const rect = getCoverRect(overlay.width, overlay.height, video.videoWidth, video.videoHeight);
+  const midX = (rect.x + ((lw.x+rw.x)/2)*rect.w) / overlay.width;
+  const midY = (rect.y + ((lw.y+rw.y)/2)*rect.h) / overlay.height;
+  const inZone = midX>ADDRESS_ZONE.xMin && midX<ADDRESS_ZONE.xMax && midY>ADDRESS_ZONE.yMin && midY<ADDRESS_ZONE.yMax;
+  return handsTogether && inZone;
 }
 
 function drawSkeletonOn(ctx,w,h,landmarks,lineColor,dotColor){
@@ -1028,12 +1140,12 @@ function drawPathTrail(ctx,w,h,trail){
   for(let i=1;i<trail.length;i++){
     const a=trail[i-1], b=trail[i];
     const alpha = 0.15 + 0.85*(i/trail.length);
-    ctx.strokeStyle = `rgba(230,199,137,${alpha})`;
+    ctx.strokeStyle = `rgba(255,45,45,${alpha})`;
     ctx.lineWidth=3;
     ctx.beginPath(); ctx.moveTo(a.x*w,a.y*h); ctx.lineTo(b.x*w,b.y*h); ctx.stroke();
   }
   const last=trail[trail.length-1];
-  ctx.fillStyle="#e6c789";
+  ctx.fillStyle="#ff2d2d";
   ctx.beginPath(); ctx.arc(last.x*w,last.y*h,5,0,7); ctx.fill();
 }
 
@@ -1062,7 +1174,11 @@ window.addEventListener("resize", fitOverlay);
 function drawLiveSkeleton(landmarks){
   const w=overlay.width, h=overlay.height;
   octx.clearRect(0,0,w,h);
-  drawSkeletonOn(octx,w,h,landmarks);
+  const rect = getCoverRect(w,h, video.videoWidth, video.videoHeight);
+  octx.save();
+  octx.translate(rect.x, rect.y);
+  drawSkeletonOn(octx, rect.w, rect.h, landmarks);
+  octx.restore();
 }
 
 function startCountdown(){
@@ -1091,16 +1207,21 @@ function trackLoop(){
     lastVideoTime = video.currentTime;
     const result = poseLandmarker.detectForVideo(video, performance.now());
     if(result.landmarks && result.landmarks.length){
-      const lm = result.landmarks[0];
+      const lm = smoothLandmarks(result.landmarks[0]);
       lastLM = lm;
       drawLiveSkeleton(lm);
       if(recording){
         liveBuffer.push({t:performance.now(), landmarks:lm});
-        pathTrail.push(clubProxy(lm));
+        // camera-tracked fallback path (hands position) — always collected
+        // so there's still a path if no Club Sensor is paired
+        const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
+        pathTrail.push(wristMid);
+        // anchor the sensor-derived path to the hands' position the moment
+        // recording starts (address), so its shape overlays on the golfer
+        if(isPaired && sensorAnchor===null){ sensorAnchor = {x:wristMid.x, y:wristMid.y}; }
 
         // auto-stop once the swing has clearly happened and the hands have
         // settled back down, rather than requiring a manual Stop click
-        const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
         if(prevWristMid){
           const speed = Math.hypot(wristMid.x-prevWristMid.x, wristMid.y-prevWristMid.y);
           if(speed > SWING_SPEED_THRESHOLD) swingPeakSeen = true;
@@ -1112,7 +1233,15 @@ function trackLoop(){
           endRecording();
         }
       }
-      if(pathVisible && pathTrail.length>1){ drawPathTrail(octx, overlay.width, overlay.height, pathTrail); }
+      // prefer the Club Sensor (phone) path once it has real samples; fall
+      // back to the camera hand-tracked path when no phone is paired
+      displayPathTrail = (isPaired && sensorPathTrail.length>1) ? sensorPathTrail : pathTrail;
+      if(pathVisible && displayPathTrail.length>1){
+        const rect = getCoverRect(overlay.width, overlay.height, video.videoWidth, video.videoHeight);
+        octx.save(); octx.translate(rect.x, rect.y);
+        drawPathTrail(octx, rect.w, rect.h, displayPathTrail);
+        octx.restore();
+      }
       if(!recording && !autoTriggering){
         if(checkAddressPosition(lm)){
           addressZone.classList.add("ready");
@@ -1130,6 +1259,7 @@ function trackLoop(){
     } else {
       octx.clearRect(0,0,overlay.width,overlay.height);
       lastLM=null;
+      smoothedLM=null; // pose was lost — don't ease back in from a stale position once it's found again
     }
   }
   requestAnimationFrame(trackLoop);
@@ -1162,13 +1292,13 @@ function recordFrameLoop(){
   rctx.translate(w,0); rctx.scale(-1,1); // mirror to match the live selfie-style view
   rctx.drawImage(video,0,0,w,h);
   if(lastLM){ drawSkeletonOn(rctx,w,h,lastLM); }
-  if(pathVisible && pathTrail.length>1) drawPathTrail(rctx,w,h,pathTrail);
+  if(pathVisible && displayPathTrail.length>1) drawPathTrail(rctx,w,h,displayPathTrail);
   rctx.restore();
   requestAnimationFrame(recordFrameLoop);
 }
 
 function beginRecording(){
-  liveBuffer=[]; pathTrail=[]; window.motionBuffer=[]; window.capturingMotion=true;
+  liveBuffer=[]; pathTrail=[]; displayPathTrail=[]; resetSensorPath(); window.motionBuffer=[]; window.capturingMotion=true;
   recording=true;
   prevWristMid=null; swingPeakSeen=false; stillFrames=0; recordStartTime=performance.now();
   recordBtn.style.display="none"; stopBtn.style.display="inline-block";
@@ -1226,7 +1356,7 @@ function endRecording(){
 recordBtn.addEventListener("click", beginRecording);
 stopBtn.addEventListener("click", endRecording);
 document.getElementById("resetBtn").addEventListener("click",()=>{
-  liveBuffer=[]; pathTrail=[];
+  liveBuffer=[]; pathTrail=[]; displayPathTrail=[]; resetSensorPath();
   matchOverlay.classList.add("hidden");
   downloadSwingLink.style.display="none";
   resetPhaseTrack();

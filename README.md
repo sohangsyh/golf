@@ -59,14 +59,22 @@ rather trigger it manually.
 
 Recording stops on its own once it detects the swing has happened and your
 hands have settled again (or after 6 seconds either way, as a fallback) — no
-need to click Stop either. While recording, a gold swing path is drawn live
+need to click Stop either. While recording, a red swing path is drawn live
 over your skeleton and baked into a downloadable video of the swing. Use the
 **Swing Path** button to turn that overlay on or off.
 
-When the swing is done, a results popup appears: your match score, an animated
-comparison that cycles through address/top/impact/finish showing your skeleton
-(gold) over the reference skeleton (green) at each phase, coaching advice, and
-the swing metrics below.
+When your phone is connected as a Club Sensor, the path is traced from the
+phone's own accelerometer/gyroscope data (the same stream used for the speed
+metrics) rather than just the camera — so its shape reflects the club's
+actual motion, anchored to where your hands are on screen at address. If no
+phone is connected, it falls back to tracking your hands with the camera
+alone.
+
+When the swing is done, a results popup appears, laid out in three parts: your
+match score at the top, a smoothly-animated skeleton comparison on the left
+that morphs through address → top → impact → finish (your skeleton in gold
+over the reference skeleton in green), coaching advice on the right, and all
+the numeric swing metrics along the bottom.
 
 Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
 Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your
