@@ -66,9 +66,18 @@ over your skeleton and baked into a downloadable video of the swing. Use the
 When your phone is connected as a Club Sensor, the path is traced from the
 phone's own accelerometer/gyroscope data (the same stream used for the speed
 metrics) rather than just the camera — so its shape reflects the club's
-actual motion, anchored to where your hands are on screen at address. If no
-phone is connected, it falls back to tracking your hands with the camera
-alone.
+actual motion, anchored to where your hands are on screen at address. The
+Club Sensor starts capturing the moment the 3-2-1 countdown begins (not just
+once recording starts at "GO!"), so nothing about the swing gets missed. If
+no phone is connected, the path falls back to tracking your hands with the
+camera alone.
+
+Pose tracking uses MediaPipe's "heavy" model (swapped in from "lite") for
+noticeably more accurate, stable skeleton tracking — it's a bigger download
+and a bit slower per frame, but worth it for swing analysis. The camera also
+now watches for more than one person in frame and always keeps whichever one
+is standing closest to the middle — where the address zone is — so someone
+walking past in the background can't hijack the skeleton.
 
 When the swing is done, a results popup appears, laid out in three parts: your
 match score at the top, an animated skeleton comparison on the left, coaching
@@ -81,7 +90,17 @@ skeleton is time-warped phase by phase to stay locked to the same moment of
 the swing as you (address together, top together, impact together, finish
 together), even though your tempo and the reference video's tempo aren't
 identical — so the two always read as doing the same movement, not just two
-clips playing side by side at their own independent speeds.
+clips playing side by side at their own independent speeds. Address/top/
+impact/finish are auto-detected from your wrist trajectory (smoothed a
+little first, so a single jittery frame can't get mistaken for the top of
+your swing) — the same detection is used everywhere it matters, so the
+phases you see highlighted, the phases scored, and the phases the comparison
+syncs to are always the same four moments.
+
+Once your swing finishes and the results popup is open, standing back in the
+address zone (which is normal — that's where you just were) won't silently
+start a new countdown and yank the popup away — auto-recording only re-arms
+once you've closed the results.
 
 Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
 Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your

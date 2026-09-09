@@ -854,8 +854,12 @@ qrOverlay.addEventListener("click", (e) => { if (e.target === qrOverlay) qrOverl
 /* ---------------- Match results popup: shown after each recorded swing ---------------- */
 const matchOverlay = document.getElementById("matchOverlay");
 const matchCloseBtn = document.getElementById("matchCloseBtn");
-matchCloseBtn.addEventListener("click", () => matchOverlay.classList.add("hidden"));
-matchOverlay.addEventListener("click", (e) => { if (e.target === matchOverlay) matchOverlay.classList.add("hidden"); });
+function closeMatchOverlay(){
+  matchOverlay.classList.add("hidden");
+  addressHoldStart=null; // don't instantly re-trigger a countdown just because they're still standing there
+}
+matchCloseBtn.addEventListener("click", closeMatchOverlay);
+matchOverlay.addEventListener("click", (e) => { if (e.target === matchOverlay) closeMatchOverlay(); });
 
 // Your camera and the reference video are filmed at different distances/framing,
 // so raw landmark coordinates from the two aren't directly comparable on one
@@ -879,22 +883,58 @@ function fitMatchCompareCanvas(){
 window.addEventListener("resize", fitMatchCompareCanvas);
 fitMatchCompareCanvas();
 
-// Figures out roughly which part of the swing a given buffer-time falls in,
-// using the same wrist-height heuristic as segmentPhases — just returning
-// timestamps instead of landmarks, so the full playback loop below can label
-// what's currently on screen without needing to re-run the whole analysis.
-function segmentPhaseTimes(buffer){
-  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+// Light moving-average smoothing over a numeric series — used before phase
+// detection so a single noisy frame (a jitter in the wrist landmark) can't
+// get mistaken for the top of the backswing or impact. Detection off the
+// heavy pose model is already much cleaner than before, but this adds a
+// safety margin.
+function smoothSeries(arr, radius){
+  const out = new Array(arr.length);
+  for(let i=0;i<arr.length;i++){
+    let sum=0, count=0;
+    for(let k=-radius;k<=radius;k++){
+      const j=i+k;
+      if(j>=0 && j<arr.length){ sum+=arr[j]; count++; }
+    }
+    out[i] = sum/count;
+  }
+  return out;
+}
+
+// Finds the address/top/impact/finish frame indices in a full {t,landmarks}
+// buffer, using the wrist-height trajectory: address is the first frame, top
+// is the highest point the wrists reach within the first 75% of the swing,
+// impact is the fastest downward wrist movement after the top, and finish is
+// the last frame. Shared by segmentPhases (returns landmarks) and
+// segmentPhaseTimes (returns timestamps) so both always agree on where each
+// phase actually is.
+function computeSwingPhaseIndices(buffer){
+  const rawWristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+  const wristY = smoothSeries(rawWristY, 2);
   const n = buffer.length;
   let topIdx=0, minY=Infinity;
   for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
+  topIdx = Math.max(topIdx,1);
   let impactIdx=topIdx, bestDelta=-Infinity;
-  for(let i=topIdx+1;i<n;i++){ const delta=wristY[i]-wristY[i-1]; if(delta>bestDelta){bestDelta=delta; impactIdx=i;} }
-  const finishIdx=n-1;
+  for(let i=topIdx+1;i<n;i++){
+    const delta = wristY[i]-wristY[i-1];
+    if(delta>bestDelta){ bestDelta=delta; impactIdx=i; }
+  }
+  impactIdx = Math.min(Math.max(impactIdx, topIdx+1), n-1);
+  const finishIdx = n-1;
+  return {addressIdx:0, topIdx, impactIdx, finishIdx};
+}
+
+// Figures out roughly which part of the swing a given buffer-time falls in —
+// returns timestamps instead of landmarks, so the full playback loop below
+// can label what's currently on screen without needing to re-run the whole
+// analysis.
+function segmentPhaseTimes(buffer){
+  const idx = computeSwingPhaseIndices(buffer);
   return {
-    top: buffer[Math.max(topIdx,1)].t,
-    impact: buffer[Math.min(Math.max(impactIdx,topIdx+1),n-1)].t,
-    finish: buffer[finishIdx].t
+    top: buffer[idx.topIdx].t,
+    impact: buffer[idx.impactIdx].t,
+    finish: buffer[idx.finishIdx].t
   };
 }
 
@@ -1073,11 +1113,22 @@ async function initModel(){
     );
     poseLandmarker = await PoseLandmarker.createFromOptions(vision,{
       baseOptions:{
-        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        // "heavy" instead of "lite" — noticeably more accurate and stable
+        // frame-to-frame, at the cost of a bigger download and slower
+        // per-frame detection. Worth it for swing analysis accuracy.
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task",
         delegate:"GPU"
       },
       runningMode:"VIDEO",
-      numPoses:1
+      // detect up to 3 candidate people per frame instead of assuming
+      // whoever the model picks first is the golfer — pickCenterPose()
+      // below then keeps whichever candidate is standing closest to the
+      // middle of frame, so a person walking through the background can't
+      // hijack the skeleton
+      numPoses:3,
+      minPoseDetectionConfidence:0.5,
+      minPosePresenceConfidence:0.5,
+      minTrackingConfidence:0.5
     });
     dot.classList.add("on"); txt.textContent="Pose model ready";
     document.getElementById("startCamBtn").disabled=false;
@@ -1101,11 +1152,26 @@ let camRunning=false, lastVideoTime=-1;
 let liveBuffer=[]; // {t, landmarks}
 let recording=false;
 let lastLM=null;
+// With numPoses>1 the model can hand back more than one candidate person per
+// frame (e.g. someone walking through the background). Always keep whoever
+// is standing closest to the middle of the frame — that's the golfer, since
+// the address zone sits dead center — instead of just taking whichever
+// candidate happened to come back first.
+function pickCenterPose(poses){
+  if(poses.length===1) return poses[0];
+  let best=poses[0], bestDist=Infinity;
+  for(const p of poses){
+    const hipMid = {x:(p[L.lHip].x+p[L.rHip].x)/2, y:(p[L.lHip].y+p[L.rHip].y)/2};
+    const dist = Math.hypot(hipMid.x-0.5, hipMid.y-0.5);
+    if(dist<bestDist){ bestDist=dist; best=p; }
+  }
+  return best;
+}
 // The raw pose model output is noisy frame-to-frame, which reads as the live
 // skeleton shaking/jittering even when you're holding still. Easing each
 // landmark toward its new position instead of snapping to it smooths that out.
 let smoothedLM=null;
-const SMOOTHING_ALPHA=0.45;
+const SMOOTHING_ALPHA=0.35;
 function smoothLandmarks(raw){
   if(!smoothedLM){ smoothedLM = raw.map(p=>({x:p.x,y:p.y,z:p.z,visibility:p.visibility})); return smoothedLM; }
   smoothedLM = raw.map((p,i)=>{
@@ -1280,6 +1346,17 @@ function drawLiveSkeleton(landmarks){
 }
 
 function startCountdown(){
+  // start the Club Sensor (phone) capturing right away, before "GO!" — not
+  // at the moment recording starts — so nothing about the swing is missed,
+  // including any early movement while counting down. The anchor for the
+  // sensor-derived path is taken now too, from the hands' address position.
+  resetSensorPath();
+  window.motionBuffer = [];
+  window.capturingMotion = true;
+  if(lastLM){
+    const lw=lastLM[L.lWrist], rw=lastLM[L.rWrist];
+    sensorAnchor = {x:(lw.x+rw.x)/2, y:(lw.y+rw.y)/2};
+  }
   countdownOverlay.classList.remove("hidden");
   const seq = ["3","2","1","GO!"];
   let i=0;
@@ -1305,7 +1382,7 @@ function trackLoop(){
     lastVideoTime = video.currentTime;
     const result = poseLandmarker.detectForVideo(video, performance.now());
     if(result.landmarks && result.landmarks.length){
-      const lm = smoothLandmarks(result.landmarks[0]);
+      const lm = smoothLandmarks(pickCenterPose(result.landmarks));
       lastLM = lm;
       drawLiveSkeleton(lm);
       if(recording){
@@ -1341,7 +1418,13 @@ function trackLoop(){
         drawPathTrail(octx, rect.w, rect.h, displayPathTrail);
         octx.restore();
       }
-      if(!recording && !autoTriggering){
+      // never auto-trigger a new countdown while the results popup is open —
+      // otherwise the player standing back in the address zone after their
+      // swing (which is normal — they just finished right there) silently
+      // starts a new countdown, and beginRecording() hides the results
+      // popup out from under them a second or two later. That was the
+      // "pops up, then jumps back to the countdown screen" bug.
+      if(!recording && !autoTriggering && matchOverlay.classList.contains("hidden")){
         if(checkAddressPosition(lm)){
           addressZone.classList.add("ready");
           if(addressHoldStart===null){ addressHoldStart = performance.now(); }
@@ -1354,6 +1437,9 @@ function trackLoop(){
           addressHoldStart=null;
           addressZone.classList.remove("ready");
         }
+      } else if(!matchOverlay.classList.contains("hidden")){
+        addressHoldStart=null;
+        addressZone.classList.remove("ready");
       }
     } else {
       octx.clearRect(0,0,overlay.width,overlay.height);
@@ -1397,7 +1483,10 @@ function recordFrameLoop(){
 }
 
 function beginRecording(){
-  liveBuffer=[]; pathTrail=[]; displayPathTrail=[]; resetSensorPath(); window.motionBuffer=[]; window.capturingMotion=true;
+  // note: Club Sensor capturing (window.capturingMotion / sensor path) is
+  // already running by this point — it was started in startCountdown() so
+  // the "3-2-1" hold is included, not just the swing after GO!
+  liveBuffer=[]; pathTrail=[]; displayPathTrail=[];
   recording=true;
   prevWristMid=null; swingPeakSeen=false; stillFrames=0; recordStartTime=performance.now();
   recordBtn.style.display="none"; stopBtn.style.display="inline-block";
@@ -1469,12 +1558,8 @@ document.getElementById("resetBtn").addEventListener("click",()=>{
 // Impact Location genuinely needs a clubface-mounted sensor, so it's reported
 // as not available rather than guessed.
 function computeSensorMetrics(buffer, motion){
-  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
   const n = buffer.length;
-  let topIdx=0, minY=Infinity;
-  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
-  let impactIdx=topIdx, bestDelta=-Infinity;
-  for(let i=topIdx+1;i<n;i++){ const d=wristY[i]-wristY[i-1]; if(d>bestDelta){bestDelta=d; impactIdx=i;} }
+  const {topIdx, impactIdx} = computeSwingPhaseIndices(buffer);
   const winStart = Math.max(topIdx, impactIdx-3), winEnd = Math.min(n-1, impactIdx+3);
   const wristMidAt = i => ({x:(buffer[i].landmarks[L.lWrist].x+buffer[i].landmarks[L.rWrist].x)/2, y:(buffer[i].landmarks[L.lWrist].y+buffer[i].landmarks[L.rWrist].y)/2});
   const p0 = wristMidAt(winStart), p1 = wristMidAt(winEnd);
@@ -1507,24 +1592,12 @@ function resetPhaseTrack(){
 
 // segment a landmark buffer into 4 phases using wrist trajectory heuristics
 function segmentPhases(buffer){
-  const wristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
-  const n = buffer.length;
-  const addressIdx = 0;
-  // top = highest wrist point (min y) within first 70% of buffer
-  let topIdx=0, minY=Infinity;
-  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
-  // impact = after top, wrist y returns near address height, pick fastest downward point
-  let impactIdx=topIdx, bestDelta=-Infinity;
-  for(let i=topIdx+1;i<n;i++){
-    const delta = wristY[i]-wristY[i-1];
-    if(delta>bestDelta){ bestDelta=delta; impactIdx=i; }
-  }
-  const finishIdx = n-1;
+  const idx = computeSwingPhaseIndices(buffer);
   return {
-    address: buffer[addressIdx].landmarks,
-    top: buffer[Math.max(topIdx,1)].landmarks,
-    impact: buffer[Math.min(Math.max(impactIdx,topIdx+1),n-1)].landmarks,
-    finish: buffer[finishIdx].landmarks
+    address: buffer[idx.addressIdx].landmarks,
+    top: buffer[idx.topIdx].landmarks,
+    impact: buffer[idx.impactIdx].landmarks,
+    finish: buffer[idx.finishIdx].landmarks
   };
 }
 
@@ -1650,7 +1723,7 @@ async function processGestureVideo(srcUrl, statusEl, sourceLabel, targetShot){
       if(uploadVideo.currentTime>=dur-0.05 || uploadVideo.paused){ resolve(); return; }
       const res = poseLandmarker.detectForVideo(uploadVideo, performance.now());
       if(res.landmarks && res.landmarks.length){
-        buffer.push({t:uploadVideo.currentTime, landmarks:res.landmarks[0]});
+        buffer.push({t:uploadVideo.currentTime, landmarks:pickCenterPose(res.landmarks)});
       }
       requestAnimationFrame(step);
     }
