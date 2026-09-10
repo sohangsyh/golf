@@ -287,16 +287,17 @@
     box-shadow:0 20px 60px rgba(0,0,0,.5);margin:auto;
   }
   /* Everything below the score used to stack in one long column (skeleton,
-     then advice, then all the metrics), which made the popup tall and forced
-     a lot of scrolling. The screen this runs on is landscape, so instead the
-     skeleton compare stays put on the left while advice + metrics + the
-     download link all live in a right-hand column, side by side with it —
-     using the screen's actual width instead of piling everything into a
-     narrow center strip. The card is now sized for that (up to 1360px wide,
-     not 720px), so the right column has real room and rarely needs its own
-     scroll at all; it only scrolls as a last resort on a short window. */
-  .match-body{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:22px;align-items:start;}
-  @media (max-width:760px){ .match-body{grid-template-columns:1fr;} .match-advice-col{max-height:none !important;overflow-y:visible !important;} }
+     then advice, then all the metrics, then the phase bars), which made the
+     popup tall and forced a lot of scrolling. The screen this runs on is
+     landscape, so instead it's three columns side by side, using the
+     screen's actual width instead of piling everything into one narrow,
+     tall strip: left is the score-matching skeleton comparison, middle is
+     the coaching notes/metrics/download, right is the Phase-by-Phase Match
+     bars on their own. The card is sized for that (up to 1360px wide, not
+     720px), so none of the three columns should need their own scrollbar. */
+  .match-body{display:grid;grid-template-columns:1.1fr 1fr 0.85fr;gap:24px;margin-top:22px;align-items:start;}
+  @media (max-width:980px){ .match-body{grid-template-columns:1fr 1fr;} .match-phase-col{grid-column:1 / -1;} }
+  @media (max-width:640px){ .match-body{grid-template-columns:1fr;} .match-advice-col, .match-phase-col{max-height:none !important;overflow-y:visible !important;} .match-phase-col{grid-column:auto;} }
   .match-compare-wrap{
     position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;
     background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
@@ -309,7 +310,7 @@
   .match-legend .dot.you{background:#e6c789;}
   .match-legend .dot.ref{margin-left:10px;background:#2e9c78;}
   .match-legend .dot.path{margin-left:10px;background:#ff2d2d;}
-  .match-advice-col{
+  .match-advice-col, .match-phase-col{
     display:flex;flex-direction:column;min-height:0;
     max-height:min(84vh, 760px);overflow-y:auto;padding-right:6px;
   }
@@ -492,11 +493,13 @@
 
         <a class="btn btn-outline" id="downloadSwingLink" style="text-decoration:none;margin-top:14px;" download>⬇ Download Swing Video</a>
 
-        <div class="match-col-title" style="margin-top:16px;">Phase-by-Phase Match</div>
-        <div class="metric-bars" id="metricBars"></div>
         <p class="small-note" id="metricsNote" style="display:none;margin-top:14px;">
           Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
         </p>
+      </div>
+      <div class="match-phase-col">
+        <div class="match-col-title">Phase-by-Phase Match</div>
+        <div class="metric-bars" id="metricBars"></div>
       </div>
     </div>
   </div>
@@ -959,19 +962,38 @@ function smoothSeries(arr, radius){
 }
 
 // Finds the address/top/impact/finish frame indices in a full {t,landmarks}
-// buffer, using the wrist-height trajectory: address is the first frame, top
-// is the highest point the wrists reach within the first 75% of the swing,
-// impact is the fastest downward wrist movement after the top, and finish is
-// the last frame. Shared by segmentPhases (returns landmarks) and
-// segmentPhaseTimes (returns timestamps) so both always agree on where each
-// phase actually is.
+// buffer, using the wrist trajectory. Recording starts the instant the 3-2-1
+// countdown hits GO!, but players routinely pause at address for a beat
+// before actually starting the backswing — treating frame 0 as "address"
+// (as this used to do) folded that idle standing-still time into the
+// address→top phase, throwing off the phase-locked time-warp against the
+// reference (whose own clip has a different amount of idle lead-in, if any)
+// and making tempo comparisons feel arbitrarily faster/slower than they
+// really were. Address is now the first real sign of takeaway motion —
+// found by comparing each frame's wrist position back to the settled
+// position over the first few frames — not just frame 0.
 function computeSwingPhaseIndices(buffer){
   const rawWristY = buffer.map(f=>(f.landmarks[L.lWrist].y+f.landmarks[L.rWrist].y)/2);
+  const rawWristX = buffer.map(f=>(f.landmarks[L.lWrist].x+f.landmarks[L.rWrist].x)/2);
   const wristY = smoothSeries(rawWristY, 2);
+  const wristX = smoothSeries(rawWristX, 2);
   const n = buffer.length;
-  let topIdx=0, minY=Infinity;
-  for(let i=0;i<Math.floor(n*0.75);i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
-  topIdx = Math.max(topIdx,1);
+
+  const baseCount = Math.min(6, n);
+  let baseX=0, baseY=0;
+  for(let i=0;i<baseCount;i++){ baseX+=wristX[i]; baseY+=wristY[i]; }
+  baseX/=baseCount; baseY/=baseCount;
+  const ADDRESS_MOVE_THRESH = 0.025; // normalized units — enough to be real takeaway motion, not hand tremor
+  let addressIdx = 0;
+  for(let i=1;i<n;i++){
+    const d = Math.hypot(wristX[i]-baseX, wristY[i]-baseY);
+    if(d>ADDRESS_MOVE_THRESH){ addressIdx = Math.max(0, i-1); break; }
+  }
+
+  let topIdx=addressIdx, minY=Infinity;
+  const topSearchEnd = Math.max(addressIdx+1, addressIdx + Math.floor((n-addressIdx)*0.75));
+  for(let i=addressIdx;i<topSearchEnd;i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
+  topIdx = Math.min(Math.max(topIdx, addressIdx+1), n-1);
   let impactIdx=topIdx, bestDelta=-Infinity;
   for(let i=topIdx+1;i<n;i++){
     const delta = wristY[i]-wristY[i-1];
@@ -979,7 +1001,7 @@ function computeSwingPhaseIndices(buffer){
   }
   impactIdx = Math.min(Math.max(impactIdx, topIdx+1), n-1);
   const finishIdx = n-1;
-  return {addressIdx:0, topIdx, impactIdx, finishIdx};
+  return {addressIdx, topIdx, impactIdx, finishIdx};
 }
 
 // Figures out roughly which part of the swing a given buffer-time falls in —
@@ -989,16 +1011,22 @@ function computeSwingPhaseIndices(buffer){
 function segmentPhaseTimes(buffer){
   const idx = computeSwingPhaseIndices(buffer);
   return {
+    address: buffer[idx.addressIdx].t,
     top: buffer[idx.topIdx].t,
     impact: buffer[idx.impactIdx].t,
     finish: buffer[idx.finishIdx].t
   };
 }
 
-// Turns a buffer's own [start, top, impact, finish] timestamps into the 4
-// boundary points a piecewise time-map needs.
+// Turns a buffer's own [address, top, impact, finish] timestamps into the 4
+// boundary points a piecewise time-map needs. Uses the real detected address
+// (first sign of takeaway motion), not just the buffer's first frame — that
+// first frame can include a beat of standing still at address after "GO!"
+// before the player actually starts moving, and counting that idle time as
+// part of the address→top phase threw off the tempo match against the
+// reference.
 function phaseBoundaries(buffer, phaseTimes){
-  return [buffer[0].t, phaseTimes.top, phaseTimes.impact, phaseTimes.finish];
+  return [phaseTimes.address, phaseTimes.top, phaseTimes.impact, phaseTimes.finish];
 }
 // Maps a time in the SOURCE buffer's timeline to the equivalent time in the
 // DEST buffer's timeline, phase-by-phase: whatever fraction of the way t is
@@ -1116,7 +1144,6 @@ let matchCompareMirrorUser=false;
 let matchCompareMirrorRef=false; // mirrors the reference too, when Right-Handed mode is on
 let matchComparePathTransform=null;
 let matchCompareRefPathTransform=null;
-let matchComparePathSource=null; // snapshot of displayPathTrail, timestamped, for phase-synced reveal
 let matchCompareLoopStart=0, matchCompareCycleMs=1600;
 
 function startMatchCompare(userBuffer, shot, userPhasesLM){
@@ -1131,12 +1158,18 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   matchCompareRefPathTransform = null;
 
   // phase timing first (both address/top landmarks and phase boundaries come
-  // from this), so the direction check below can use it
+  // from this), so the direction check below can use it. matchCompareUserT0
+  // is the REAL detected start of takeaway motion (segmentPhaseTimes'
+  // .address), not just the first recorded frame — recording starts the
+  // instant the countdown hits GO!, but players routinely pause at address
+  // for a beat first, and counting that idle time as part of the swing threw
+  // off the tempo match against the reference and left an unmatched lead-in
+  // sitting in the comparison.
   let refPhaseTimes = null;
   if(matchCompareUserBuf){
-    matchCompareUserT0 = matchCompareUserBuf[0].t;
-    matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
     matchComparePhaseTimes = segmentPhaseTimes(matchCompareUserBuf);
+    matchCompareUserT0 = matchComparePhaseTimes.address;
+    matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
     matchCompareUserBounds = phaseBoundaries(matchCompareUserBuf, matchComparePhaseTimes);
   } else {
     matchCompareUserDur = 1600;
@@ -1152,8 +1185,12 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   // use that SAME effective orientation, not the raw stored one, so the
   // user's skeleton ends up matched to whatever the player is actually
   // looking at.
-  const userAddressLM = matchCompareUserBuf ? matchCompareUserBuf[0].landmarks : (userPhasesLM && userPhasesLM.address);
-  let refAddressLM = matchCompareRefBuf ? matchCompareRefBuf[0].landmarks : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
+  const userAddressLM = matchCompareUserBuf
+    ? (interpolateFrame(matchCompareUserBuf, matchComparePhaseTimes.address) || matchCompareUserBuf[0].landmarks)
+    : (userPhasesLM && userPhasesLM.address);
+  let refAddressLM = matchCompareRefBuf
+    ? (interpolateFrame(matchCompareRefBuf, refPhaseTimes.address) || matchCompareRefBuf[0].landmarks)
+    : (referencePhaseLandmarks[shot] && referencePhaseLandmarks[shot].address);
   const userTopLM = matchCompareUserBuf && matchComparePhaseTimes
     ? (nearestFrame(matchCompareUserBuf, matchComparePhaseTimes.top) || {}).landmarks
     : (userPhasesLM && userPhasesLM.top);
@@ -1188,12 +1225,6 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   if(refAddressLM){
     matchCompareRefPathTransform = computeFixedTransform(refAddressLM);
   }
-  // snapshot now — displayPathTrail keeps re-evaluating every camera frame
-  // (harmlessly, to the same content) until the next countdown starts, but
-  // we want a fixed reference to reveal progressively against userT below
-  matchComparePathSource = (displayPathTrail && displayPathTrail.length>1 && displayPathTrail[0].t!=null)
-    ? displayPathTrail.slice()
-    : null;
 
   matchCompareCycleMs = Math.max(matchCompareUserDur, 900);
   matchCompareLoopStart = performance.now();
@@ -1242,22 +1273,31 @@ function matchCompareLoop(){
     document.getElementById("matchPhaseLabel").textContent = labelPhase;
 
     // Swing path first (underneath), so the skeletons stay readable on top.
-    // Rather than dumping the whole recorded path on screen at once (which
-    // is what made it feel out of sync — it wasn't tied to the animation's
-    // own timing at all), it's revealed progressively using the exact same
-    // userT that drives the skeletons: only the portion of the path
-    // recorded up through "right now" in the phase-locked playback is
-    // drawn, so it grows address→top, then top→impact, then impact→finish,
-    // in step with the phase label and the skeleton animation above it.
-    if(matchComparePathTransform && matchComparePathSource && userT!=null){
-      const visible = matchComparePathSource.filter(pt => pt.t <= userT);
-      if(visible.length>1){
-        const trail = visible.map(pt=>{
-          const mp = matchCompareMirrorUser ? {x:1-pt.x, y:pt.y} : pt;
-          return applyFixedTransform(mp, matchComparePathTransform, 0.5, 0.55);
-        });
-        drawPathTrail(matchCompareCtx, w, h, trail);
+    // This used to be traced from the Club Sensor / camera capture that ran
+    // DURING the actual swing (a separately-timestamped trail), which meant
+    // it was really showing the phone's own raw motion — subject to network
+    // latency from the phone and to drift in the accelerometer
+    // double-integration — rather than exactly where your hands are on
+    // screen right now. It's drawn from the SAME interpolated skeleton
+    // buffer used to draw the hands above it instead: at every instant it's
+    // literally "where the wrists were, resampled at fine steps from address
+    // up through right now" — so the red trail can never disagree with
+    // where your hands actually are, and it still grows address→top,
+    // top→impact, impact→finish in step with the phase label since it's
+    // built from the same phase-locked userT.
+    if(matchComparePathTransform && matchCompareUserBuf && userT!=null){
+      const STEPS = 48;
+      const trail=[];
+      for(let i=0;i<=STEPS;i++){
+        const tt = matchCompareUserT0 + (i/STEPS)*(userT-matchCompareUserT0);
+        if(tt>userT) break;
+        const lm = interpolateFrame(matchCompareUserBuf, tt);
+        if(!lm) continue;
+        const wm = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2};
+        const mp = matchCompareMirrorUser ? {x:1-wm.x, y:wm.y} : wm;
+        trail.push(applyFixedTransform(mp, matchComparePathTransform, 0.5, 0.55));
       }
+      if(trail.length>1) drawPathTrail(matchCompareCtx, w, h, trail);
     }
 
     // Both skeletons are drawn in FIXED (address-anchored) frames rather than
@@ -1374,20 +1414,45 @@ let liveBuffer=[]; // {t, landmarks}
 let recording=false;
 let lastLM=null;
 // With numPoses>1 the model can hand back more than one candidate person per
-// frame (e.g. someone walking through the background). Always keep whoever
-// is standing closest to the middle of the frame — that's the golfer, since
-// the address zone sits dead center — instead of just taking whichever
-// candidate happened to come back first.
-function pickCenterPose(poses){
+// frame (e.g. someone walking through the background). By default keep
+// whoever is standing closest to the middle of the frame — that's the
+// golfer, since the address zone sits dead center. An optional preferHipMid
+// (the previously-chosen person's hip position) lets a caller track the SAME
+// person continuously instead: when two overlapping detections are both
+// near center, ranking purely by distance-from-center can flip between them
+// frame to frame as their relative distances jitter, which read as the live
+// skeleton randomly snapping between two slightly different poses. Locking
+// onto whoever is closest to where the tracked person was a moment ago
+// avoids that flip.
+function pickCenterPose(poses, preferHipMid){
   if(poses.length===1) return poses[0];
+  const target = preferHipMid || {x:0.5, y:0.5};
   let best=poses[0], bestDist=Infinity;
   for(const p of poses){
     const hipMid = {x:(p[L.lHip].x+p[L.rHip].x)/2, y:(p[L.lHip].y+p[L.rHip].y)/2};
-    const dist = Math.hypot(hipMid.x-0.5, hipMid.y-0.5);
+    const dist = Math.hypot(hipMid.x-target.x, hipMid.y-target.y);
     if(dist<bestDist){ bestDist=dist; best=p; }
   }
   return best;
 }
+// Core landmarks used to judge whether a detection is confident enough to
+// trust at all — when the model briefly loses track (a fast swing blurring
+// the arms, a wrist crossing in front of the body) it can still return SOME
+// landmarks, just with low visibility/confidence on them, and drawing those
+// verbatim is what made the live skeleton feel unstable: it would snap to a
+// clearly-wrong guess for a frame or two before recovering. Below the
+// confidence floor, the previous good frame is held instead of updating.
+const STABILITY_LANDMARKS = [L.lHip,L.rHip,L.lShoulder,L.rShoulder,L.lWrist,L.rWrist,L.lElbow,L.rElbow];
+const STABILITY_MIN_VISIBILITY = 0.35;
+function poseConfident(lm){
+  let sum=0, n=0;
+  for(const i of STABILITY_LANDMARKS){
+    const v = lm[i] && lm[i].visibility;
+    if(v!=null){ sum+=v; n++; }
+  }
+  return n===0 || (sum/n) >= STABILITY_MIN_VISIBILITY;
+}
+let lastLiveHipMid = null;
 // The raw pose model output is noisy frame-to-frame, which reads as the live
 // skeleton shaking/jittering even when you're holding still. Easing each
 // landmark toward its new position instead of snapping to it smooths that out.
@@ -1659,8 +1724,22 @@ function trackLoop(){
     lastVideoTime = video.currentTime;
     const result = poseLandmarker.detectForVideo(video, performance.now());
     if(result.landmarks && result.landmarks.length){
-      const lm = smoothLandmarks(pickCenterPose(result.landmarks));
-      lastLM = lm;
+      // Track the SAME person frame to frame (hysteresis via lastLiveHipMid)
+      // rather than re-picking purely by distance-from-center every frame —
+      // and if this frame's detection comes back low-confidence (a fast
+      // swing blurring the arms, a wrist briefly crossing in front of the
+      // body), hold the last good pose instead of snapping to a noisy
+      // guess. Both were causing the live skeleton to feel unstable/jittery
+      // even though the underlying pose model itself hadn't changed.
+      const candidate = pickCenterPose(result.landmarks, lastLiveHipMid);
+      let lm;
+      if(!lastLM || poseConfident(candidate)){
+        lastLiveHipMid = {x:(candidate[L.lHip].x+candidate[L.rHip].x)/2, y:(candidate[L.lHip].y+candidate[L.rHip].y)/2};
+        lm = smoothLandmarks(candidate);
+        lastLM = lm;
+      } else {
+        lm = lastLM;
+      }
       drawLiveSkeleton(lm);
       if(recording){
         const nowT = performance.now();
@@ -1727,6 +1806,7 @@ function trackLoop(){
       octx.clearRect(0,0,overlay.width,overlay.height);
       lastLM=null;
       smoothedLM=null; // pose was lost — don't ease back in from a stale position once it's found again
+      lastLiveHipMid=null; // no one to keep tracking continuity with either
     }
   }
   requestAnimationFrame(trackLoop);

@@ -135,51 +135,69 @@ as the same movement, whichever handedness mode you're in.
 
 ## Results layout and the swing path
 
+The results popup is laid out as three columns side by side, in that order:
+your match score and the animated skeleton comparison on the left, coaching
+notes + the swing-metrics numbers + the Download Swing Video button in the
+middle, and the Phase-by-Phase Match bars on their own on the right. That's
+deliberately not "two columns with everything crammed into the second one" —
+splitting the numbers-heavy phase bars into their own column is what lets
+the whole popup fit a normal landscape screen without needing to scroll.
+The popup itself is sized for that (up to 1360px wide), and each column
+only gets its own scrollbar as a last resort if a window is unusually short.
+
 The swing path in the results popup grows in step with the phase-locked
-comparison animation instead of appearing all at once — it's split by
-address→top, top→impact, and impact→finish (using each point's actual
-recording timestamp) and revealed in that same sequence as the skeletons
-play through those phases, so the path and the "ADDRESS → TOP" / "TOP →
-IMPACT" / "IMPACT → FINISH" label above it are always showing the same
-moment of the swing.
+comparison animation instead of appearing all at once — split by
+address→top, top→impact, and impact→finish, revealed in that same sequence
+as the skeletons play through those phases, so the path and the "ADDRESS →
+TOP" / "TOP → IMPACT" / "IMPACT → FINISH" label above it always show the
+same moment of the swing. It's built directly from your recorded skeleton
+(the same interpolated wrist position used to draw your hands, resampled at
+fine steps from address up through the current instant) rather than from a
+separately-timestamped capture — the swing path shown live on the camera
+while you're actually swinging still traces the phone's real accelerometer
+motion (useful for a "feel" of the club head in real time), but the results
+comparison's path is tied exactly to where your hands are on screen, so it
+can't drift out of sync the way a separate sensor-timed trace could.
 
-Two rendering bugs that made the path and skeleton look disconnected from
-each other (path drifting away from the hands, or the whole thing reading
-as generally laggy) are fixed now:
+Both skeletons in the comparison are drawn in a fixed, address-anchored
+frame instead of being re-centered on the current pose every single frame —
+that keeps the path and the skeletons always agreeing on where the body
+actually is as it moves through the swing (previously the skeleton would
+snap back to a re-centered stance every frame while the path, which was
+already fixed, showed the real, un-stabilized motion — the two would drift
+apart from each other during the swing). Playback is also now interpolated
+between the real recorded frames bracketing each instant instead of
+snapping to whichever one is nearest in time, since the pose model can't
+sample every screen refresh — that stair-step hold-then-jump was what read
+as "laggy" even though the underlying capture hadn't changed.
 
-- The skeleton used to re-center itself on the body's current position every
-  single frame, while the swing path was drawn in a fixed frame anchored to
-  address. That meant the two disagreed about where the body actually was
-  as it moved through the swing, so the red path would visibly drift away
-  from the gold/green hands instead of tracking them. Both skeletons and the
-  path are now drawn in the same fixed, address-anchored frame, so the path
-  always passes exactly through wherever the hands are at every instant.
-- Playback used to snap to whichever recorded frame was nearest in time,
-  which — since the pose model can't sample every single screen refresh —
-  showed up as a stair-step hold-then-jump motion rather than smooth
-  movement. Both skeletons are now interpolated between the two real frames
-  bracketing each moment, so the comparison plays back genuinely smoothly
-  regardless of how fast the pose model itself is running.
+"Address" — the anchor the whole comparison times itself from — is now the
+first real sign of takeaway motion, not just the first recorded frame.
+Recording starts the instant the 3-2-1 countdown hits GO!, but players
+routinely pause at address for a beat before actually starting the
+backswing; treating that idle standing-still time as part of the
+address→top phase used to throw off the tempo match against the reference.
+Each phase (address→top, top→impact, impact→finish) is still time-warped
+independently to line up with the reference's own phases regardless of how
+much faster or slower you swing than the reference clip — fixing where
+"address" really starts is what makes that warp land on the actual swing
+instead of partly on idle time beforehand.
 
-Coaching notes, the swing-metrics numbers, the Download Swing Video button,
-and the phase-by-phase match bars all live in a right-hand column next to
-the skeleton comparison, laid out side-by-side to use the screen's actual
-landscape width rather than stacking everything into one narrow, tall
-column. The popup itself is now sized for that (up to 1360px wide instead
-of 720px), so the right column has real room and normally doesn't need its
-own scrollbar at all. The Download Swing Video button sits right under the
-speed/path/angle numbers so it's easy to find rather than buried under a
-paragraph of fine print — that fine print now sits at the very bottom,
-below the phase bars, since it's the least essential thing there.
+The comparison also auto-corrects a left/right mismatch: the live camera
+view is always shown mirrored (a selfie view, so it feels natural while
+swinging), but depending on how a given reference clip was originally
+filmed, its own left/right isn't guaranteed to line up with that.
+SwingVision checks which way your hands actually travel on the backswing
+versus the reference's, and flips your skeleton and swing path to match if
+needed, so the two always read as the same movement.
 
-The results comparison also now shows your swing path (in red, same as the
-live view) laid over the skeletons, and auto-corrects a left/right mismatch:
-the live camera view is always shown mirrored (a selfie view, so it feels
-natural while swinging), but depending on how a given reference clip was
-originally filmed, its own left/right isn't guaranteed to line up with that.
-SwingVision checks the shoulder orientation of both skeletons at address and
-flips yours if needed, so the two always overlay as the same movement
-instead of looking like a mirror-image, opposite-handed swing.
+The live camera view's own skeleton is more stable now too: it tracks the
+same detected person continuously frame to frame instead of just picking
+whoever's closest to center fresh every frame (which could flip between two
+overlapping detections), and holds the last good pose for a frame or two
+when a detection briefly comes back low-confidence (a fast swing blurring
+the arms, a wrist crossing in front of the body) instead of snapping to a
+noisy guess.
 
 The **Record** button now says which shot it'll record and compare against —
 **Record Swing**, **Record Putting**, or **Record Chip Shot** — matching
