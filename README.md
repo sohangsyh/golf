@@ -74,9 +74,13 @@ earlier version tried deriving the path's shape from the phone's
 accelerometer instead — double-integrating raw acceleration into a
 position — but that drifts almost immediately without a full orientation
 sensor, which is what caused the path to visibly lag or detach from your
-hands. Tracking the hands directly avoids that problem entirely.) The Club
-Sensor still starts capturing the moment the 3-2-1 countdown begins (not
-just once recording starts at "GO!"), so nothing about the swing is missed
+hands. Tracking the hands directly avoids that problem entirely.) The red
+dot now also always starts exactly inside the address-zone rectangle, since
+that's the condition that triggers recording in the first place — the very
+first path point is anchored to the rectangle's center rather than wherever
+tracking happens to land a moment later. The Club Sensor still starts
+capturing the moment the 3-2-1 countdown begins (not just once recording
+starts at "GO!"), so nothing about the swing is missed
 for the speed/angle metrics below, which do still use the phone's own data.
 
 Pose tracking uses MediaPipe's "heavy" model (swapped in from "lite") for
@@ -85,6 +89,17 @@ and a bit slower per frame, but worth it for swing analysis. The camera also
 now watches for more than one person in frame and always keeps whichever one
 is standing closest to the middle — where the address zone is — so someone
 walking past in the background can't hijack the skeleton.
+
+The live skeleton (and the swing path drawn from it) used to visibly lag
+behind your actual motion and undersell how far your hands really moved —
+both come from the same cause: the jitter-smoothing filter eased toward each
+new detected position by a fixed amount every frame, which is strong enough
+to hold still at address but also delays and flattens genuinely fast motion,
+not just slow jitter. It now adapts: heavy smoothing when the hands are
+nearly still (holding the stability at address), much lighter smoothing the
+moment real swing speed is detected — so the live skeleton and swing path
+track the actual motion far more closely during the swing itself, while
+staying just as steady beforehand.
 
 When the swing is done, a results popup appears, laid out in three parts: your
 match score at the top, an animated skeleton comparison on the left, coaching
@@ -179,9 +194,36 @@ backswing; treating that idle standing-still time as part of the
 address→top phase used to throw off the tempo match against the reference.
 Each phase (address→top, top→impact, impact→finish) is still time-warped
 independently to line up with the reference's own phases regardless of how
-much faster or slower you swing than the reference clip — fixing where
-"address" really starts is what makes that warp land on the actual swing
-instead of partly on idle time beforehand.
+much faster or slower you swing than the reference clip — a 5-second
+reference clip and a 10-second recording of you are matched phase to
+phase (address together, top together, impact together, finish together)
+rather than compared on raw elapsed time, so different tempos are expected
+and handled, not a bug.
+
+"Finish" got the same treatment from the other end for the same reason:
+it used to just be the buffer's very last recorded frame, which is fine if
+recording stops right as the swing settles, but not if it doesn't — a
+gentle putt or chip's hand speed could stay under the auto-stop threshold
+tuned for a full swing, meaning the trigger to stop recording early never
+fired and it just ran to the 6-second fallback every time, capturing
+several idle seconds of you just standing there afterward. That idle
+padding, counted as part of "impact→finish," is what could make the
+comparison look buggy — a real ~1s putt time-warped against several extra
+idle seconds, stretched to match a reference clip with no such padding.
+Two fixes: auto-stop's speed thresholds are now shot-specific (much lower
+for putting/chip, matched to how gently those actually move), so it
+reliably triggers soon after the real motion instead of falling through to
+the timeout; and finish is now detected the same way address is — the
+first moment the hands actually settle back down after impact, not just
+"wherever the recording happened to end" — so even if extra idle time does
+get recorded, it's trimmed out of the comparison rather than fed into it.
+Impact detection is also more robust now: instead of scanning the entire
+rest of the recording for whichever single frame had the single biggest
+frame-to-frame jump (which a stray jitter during a long idle tail could
+easily win), it's the real peak hand speed (distance/time, not just a raw
+per-frame delta) within the roughly one second after the top a downswing
+can actually take — a physically grounded measurement that can't reach
+into idle time to find a false impact.
 
 The comparison also auto-corrects a left/right mismatch: the live camera
 view is always shown mirrored (a selfie view, so it feels natural while

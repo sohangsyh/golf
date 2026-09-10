@@ -1001,13 +1001,56 @@ function computeSwingPhaseIndices(buffer){
   const topSearchEnd = Math.max(addressIdx+1, addressIdx + Math.floor((n-addressIdx)*0.75));
   for(let i=addressIdx;i<topSearchEnd;i++){ if(wristY[i]<minY){minY=wristY[i]; topIdx=i;} }
   topIdx = Math.min(Math.max(topIdx, addressIdx+1), n-1);
-  let impactIdx=topIdx, bestDelta=-Infinity;
+
+  // Impact used to be "whichever single frame had the biggest downward Y
+  // jump, searched across the ENTIRE rest of the buffer" — a raw per-frame
+  // delta is noise-prone on its own, and searching all the way to the end
+  // meant that if the recording ran long after the real swing was over
+  // (auto-stop never triggering for a gentle putt/chip, or just extra idle
+  // time before the 6s fallback), a single jitter spike during that idle
+  // tail could easily out-score the real impact and get mistaken for it.
+  // Real time-based velocity (distance/dt, not index-based delta) over a
+  // window bounded to how long a downswing can actually take fixes both:
+  // it's a physically meaningful peak-speed measurement, and it can't reach
+  // into idle time long after the swing to find a false peak.
+  const IMPACT_SEARCH_MS = 1500;
+  let impactIdx=topIdx, bestSpeed=-Infinity;
   for(let i=topIdx+1;i<n;i++){
-    const delta = wristY[i]-wristY[i-1];
-    if(delta>bestDelta){ bestDelta=delta; impactIdx=i; }
+    if(buffer[i].t - buffer[topIdx].t > IMPACT_SEARCH_MS) break;
+    const dt = Math.max(0.001, (buffer[i].t-buffer[i-1].t)/1000);
+    const speed = Math.hypot(wristX[i]-wristX[i-1], wristY[i]-wristY[i-1]) / dt;
+    if(speed>bestSpeed){ bestSpeed=speed; impactIdx=i; }
   }
   impactIdx = Math.min(Math.max(impactIdx, topIdx+1), n-1);
-  const finishIdx = n-1;
+
+  // Finish used to just be the buffer's last recorded frame — fine when
+  // auto-stop cuts the recording shortly after the swing settles, but if it
+  // didn't (see SWING_SPEED_THRESHOLD_BY_SHOT above), that last frame could
+  // be several idle seconds after the swing actually finished. Feeding that
+  // padding into the impact→finish phase is what stretched the time-warped
+  // comparison out of proportion against the reference and read as a bug.
+  // Instead, walk forward from impact and use the first moment the hands
+  // settle back down (speed under a small threshold for a sustained
+  // stretch) as finish — trimming any idle tail so only the actual swing,
+  // however long the raw recording ran, gets compared.
+  const SETTLE_SPEED = 0.012, SETTLE_HOLD_MS = 350;
+  let finishIdx = n-1;
+  for(let i=impactIdx+1;i<n;i++){
+    const dt = Math.max(0.001, (buffer[i].t-buffer[i-1].t)/1000);
+    const speed = Math.hypot(wristX[i]-wristX[i-1], wristY[i]-wristY[i-1]) / dt;
+    if(speed<SETTLE_SPEED){
+      const holdStartT = buffer[i].t;
+      let j=i, settled=true;
+      while(j<n && buffer[j].t-holdStartT < SETTLE_HOLD_MS){
+        const dtj = Math.max(0.001, (buffer[j].t-buffer[Math.max(0,j-1)].t)/1000);
+        const spj = j>0 ? Math.hypot(wristX[j]-wristX[j-1], wristY[j]-wristY[j-1])/dtj : 0;
+        if(spj>=SETTLE_SPEED){ settled=false; break; }
+        j++;
+      }
+      if(settled){ finishIdx = i; break; }
+    }
+  }
+  finishIdx = Math.max(finishIdx, impactIdx+1);
   return {addressIdx, topIdx, impactIdx, finishIdx};
 }
 
@@ -1176,7 +1219,13 @@ function startMatchCompare(userBuffer, shot, userPhasesLM){
   if(matchCompareUserBuf){
     matchComparePhaseTimes = segmentPhaseTimes(matchCompareUserBuf);
     matchCompareUserT0 = matchComparePhaseTimes.address;
-    matchCompareUserDur = Math.max(300, matchCompareUserBuf[matchCompareUserBuf.length-1].t - matchCompareUserT0);
+    // ends at the detected FINISH, not the buffer's last recorded frame —
+    // if auto-stop didn't trigger right away (a gentle putt/chip, or just
+    // extra idle time before the 6s fallback), the raw recording can run
+    // well past the point the swing actually settled. Trimming the loop to
+    // [address, finish] means only the real swing gets compared/time-warped
+    // against the reference, whatever the raw recording's total length was.
+    matchCompareUserDur = Math.max(300, matchComparePhaseTimes.finish - matchCompareUserT0);
     matchCompareUserBounds = phaseBoundaries(matchCompareUserBuf, matchComparePhaseTimes);
   } else {
     matchCompareUserDur = 1600;
@@ -1462,17 +1511,35 @@ function poseConfident(lm){
 let lastLiveHipMid = null;
 // The raw pose model output is noisy frame-to-frame, which reads as the live
 // skeleton shaking/jittering even when you're holding still. Easing each
-// landmark toward its new position instead of snapping to it smooths that out.
+// landmark toward its new position instead of snapping to it smooths that
+// out — but a single fixed ease factor is a bad compromise for a golf swing
+// specifically: strong enough to hold still at address, it's also strong
+// enough to noticeably lag behind (and shrink the visible amplitude of) the
+// fast part of the actual swing, which is what was reading as "the swing
+// path is delayed" and "the scale doesn't match the live camera" — a low-
+// pass filter both delays AND flattens fast motion, not just one or the
+// other. This adapts the ease factor to how fast the wrists are actually
+// moving each frame: heavy smoothing near address (still, so jitter
+// suppression matters), light smoothing during the swing itself (fast, so
+// keeping up with the real motion/amplitude matters more than jitter).
 let smoothedLM=null;
-const SMOOTHING_ALPHA=0.35;
+const SMOOTHING_ALPHA_MIN=0.28;  // near-still: still favors stability over responsiveness
+const SMOOTHING_ALPHA_MAX=0.85;  // fast motion: mostly just track the raw detection directly
+const SMOOTHING_SPEED_LO=0.004;  // normalized units/frame — below this, treat as "still"
+const SMOOTHING_SPEED_HI=0.028;  // above this, treat as "mid-swing", already at max responsiveness
 function smoothLandmarks(raw){
   if(!smoothedLM){ smoothedLM = raw.map(p=>({x:p.x,y:p.y,z:p.z,visibility:p.visibility})); return smoothedLM; }
+  const rawWristMid = {x:(raw[L.lWrist].x+raw[L.rWrist].x)/2, y:(raw[L.lWrist].y+raw[L.rWrist].y)/2};
+  const smWristMid = {x:(smoothedLM[L.lWrist].x+smoothedLM[L.rWrist].x)/2, y:(smoothedLM[L.lWrist].y+smoothedLM[L.rWrist].y)/2};
+  const spd = Math.hypot(rawWristMid.x-smWristMid.x, rawWristMid.y-smWristMid.y);
+  const f = Math.min(1, Math.max(0, (spd-SMOOTHING_SPEED_LO)/(SMOOTHING_SPEED_HI-SMOOTHING_SPEED_LO)));
+  const alpha = SMOOTHING_ALPHA_MIN + f*(SMOOTHING_ALPHA_MAX-SMOOTHING_ALPHA_MIN);
   smoothedLM = raw.map((p,i)=>{
     const s = smoothedLM[i];
     return {
-      x: s.x+(p.x-s.x)*SMOOTHING_ALPHA,
-      y: s.y+(p.y-s.y)*SMOOTHING_ALPHA,
-      z: (s.z!=null && p.z!=null) ? s.z+(p.z-s.z)*SMOOTHING_ALPHA : p.z,
+      x: s.x+(p.x-s.x)*alpha,
+      y: s.y+(p.y-s.y)*alpha,
+      z: (s.z!=null && p.z!=null) ? s.z+(p.z-s.z)*alpha : p.z,
       visibility: p.visibility
     };
   });
@@ -1482,7 +1549,20 @@ let pathTrail=[]; // camera-tracked fallback path (hands position), used when no
 // auto-stop-on-swing-completion state: watch wrist speed to detect that a
 // swing happened and the player's hands have settled again
 let prevWristMid=null, swingPeakSeen=false, stillFrames=0, recordStartTime=0;
-const SWING_SPEED_THRESHOLD=0.05, STILL_SPEED_THRESHOLD=0.01, MAX_RECORD_MS=6000;
+// Putting/chip motion never gets close to a full swing's wrist speed, so a
+// single threshold tuned for a full swing meant swingPeakSeen could just
+// never trigger for those shot types — recording would then run all the way
+// to the MAX_RECORD_MS fallback every time, capturing several extra seconds
+// of the player just standing there after they'd already finished. That
+// idle tail then got fed into phase detection as part of "impact→finish",
+// which is the "bug" in the results comparison this was causing — a real
+// ~1s putt stretched against several idle seconds, phase-warped against a
+// reference clip with no such padding. Lower thresholds for the gentler
+// shot types so they reliably auto-stop shortly after their own (smaller)
+// motion peak instead.
+const SWING_SPEED_THRESHOLD_BY_SHOT = {swing:0.05, chip:0.03, putting:0.015};
+const STILL_SPEED_THRESHOLD_BY_SHOT = {swing:0.01, chip:0.007, putting:0.004};
+const MAX_RECORD_MS=6000;
 let pathVisible=true;
 let addressHoldStart=null;
 let autoTriggering=false;
@@ -1580,6 +1660,24 @@ function getCoverRect(containerW, containerH, videoW, videoH){
   const scale = Math.max(containerW/videoW, containerH/videoH);
   const w = videoW*scale, h = videoH*scale;
   return {x:(containerW-w)/2, y:(containerH-h)/2, w, h};
+}
+
+// The inverse of checkAddressPosition's transform: given the address-zone
+// rectangle (defined in overlay/stage-normalized space), find its center in
+// video-normalized space — the same coordinate space pathTrail points are
+// stored in. Recording only ever starts once the player's hands have been
+// confirmed inside that rectangle, so seeding the very first path point
+// here (rather than wherever the tracked wrist happens to land on the
+// first captured frame, which can be a few pixels off after a few seconds
+// of holding the countdown pose) guarantees the swing path visibly starts
+// exactly inside the rectangle every time, matching the condition that
+// actually triggered the recording.
+function addressZoneCenterVideoNorm(){
+  const rect = getCoverRect(overlay.width, overlay.height, video.videoWidth, video.videoHeight);
+  if(!rect.w || !rect.h) return null;
+  const cxOverlay = (ADDRESS_ZONE.xMin+ADDRESS_ZONE.xMax)/2 * overlay.width;
+  const cyOverlay = (ADDRESS_ZONE.yMin+ADDRESS_ZONE.yMax)/2 * overlay.height;
+  return { x: (cxOverlay-rect.x)/rect.w, y: (cyOverlay-rect.y)/rect.h };
 }
 
 function checkAddressPosition(lm){
@@ -1708,11 +1806,16 @@ function trackLoop(){
         pathTrail.push(wristMid);
 
         // auto-stop once the swing has clearly happened and the hands have
-        // settled back down, rather than requiring a manual Stop click
+        // settled back down, rather than requiring a manual Stop click —
+        // thresholds are shot-specific (see SWING_SPEED_THRESHOLD_BY_SHOT)
+        // so a gentle putt reliably triggers this instead of running to the
+        // MAX_RECORD_MS fallback every time
         if(prevWristMid){
           const speed = Math.hypot(wristMid.x-prevWristMid.x, wristMid.y-prevWristMid.y);
-          if(speed > SWING_SPEED_THRESHOLD) swingPeakSeen = true;
-          stillFrames = (swingPeakSeen && speed < STILL_SPEED_THRESHOLD) ? stillFrames+1 : 0;
+          const swingThresh = SWING_SPEED_THRESHOLD_BY_SHOT[currentShot] ?? SWING_SPEED_THRESHOLD_BY_SHOT.swing;
+          const stillThresh = STILL_SPEED_THRESHOLD_BY_SHOT[currentShot] ?? STILL_SPEED_THRESHOLD_BY_SHOT.swing;
+          if(speed > swingThresh) swingPeakSeen = true;
+          stillFrames = (swingPeakSeen && speed < stillThresh) ? stillFrames+1 : 0;
         }
         prevWristMid = wristMid;
         const elapsed = performance.now()-recordStartTime;
@@ -1801,7 +1904,14 @@ function beginRecording(){
   // note: Club Sensor capturing (window.capturingMotion / sensor path) is
   // already running by this point — it was started in startCountdown() so
   // the "3-2-1" hold is included, not just the swing after GO!
-  liveBuffer=[]; pathTrail=[]; displayPathTrail=[];
+  liveBuffer=[];
+  // seed the path at the address-zone rectangle's exact center — see
+  // addressZoneCenterVideoNorm() — so the red dot always visibly starts
+  // inside the box, matching the "hands confirmed in the rectangle"
+  // condition that triggered this recording in the first place
+  const zoneCenter = addressZoneCenterVideoNorm();
+  pathTrail = zoneCenter ? [{x:zoneCenter.x, y:zoneCenter.y, t:performance.now()}] : [];
+  displayPathTrail=[];
   recording=true;
   prevWristMid=null; swingPeakSeen=false; stillFrames=0; recordStartTime=performance.now();
   recordBtn.style.display="none"; stopBtn.style.display="inline-block";
