@@ -63,14 +63,21 @@ need to click Stop either. While recording, a red swing path is drawn live
 over your skeleton and baked into a downloadable video of the swing. Use the
 **Swing Path** button to turn that overlay on or off.
 
-When your phone is connected as a Club Sensor, the path is traced from the
-phone's own accelerometer/gyroscope data (the same stream used for the speed
-metrics) rather than just the camera — so its shape reflects the club's
-actual motion, anchored to where your hands are on screen at address. The
-Club Sensor starts capturing the moment the 3-2-1 countdown begins (not just
-once recording starts at "GO!"), so nothing about the swing gets missed. If
-no phone is connected, the path falls back to tracking your hands with the
-camera alone.
+Hold the phone with both hands directly in front of you at address, facing
+the camera, tilted roughly 45° toward the ground — that's also what the
+camera uses to confirm you're in position before it starts the countdown.
+Because the phone travels with your two hands for the whole swing, the red
+swing path is simply your tracked hand position from the camera — it's
+guaranteed to always line up with your hands, live and in the results,
+since it's the same measurement rather than a separate estimate. (An
+earlier version tried deriving the path's shape from the phone's
+accelerometer instead — double-integrating raw acceleration into a
+position — but that drifts almost immediately without a full orientation
+sensor, which is what caused the path to visibly lag or detach from your
+hands. Tracking the hands directly avoids that problem entirely.) The Club
+Sensor still starts capturing the moment the 3-2-1 countdown begins (not
+just once recording starts at "GO!"), so nothing about the swing is missed
+for the speed/angle metrics below, which do still use the phone's own data.
 
 Pose tracking uses MediaPipe's "heavy" model (swapped in from "lite") for
 noticeably more accurate, stable skeleton tracking — it's a bigger download
@@ -111,11 +118,6 @@ The address box you hold your hands in is now sized to exactly match the
 stays exact if you ever restyle it) and sits a bit lower on screen than
 before, roughly where your hands fall at address.
 
-The Club Sensor swing path also used to lag noticeably behind your actual
-motion — its underlying math (turning acceleration into a position) was
-tuned with time constants slower than a golf swing itself, so the path was
-always trailing behind by close to a second. Sped that up considerably.
-
 ## Left-Handed / Right-Handed
 
 The bundled reference clips demonstrate a swing toward screen-right, which
@@ -136,28 +138,26 @@ as the same movement, whichever handedness mode you're in.
 ## Results layout and the swing path
 
 The results popup is laid out as three columns side by side, in that order:
-your match score and the animated skeleton comparison on the left, coaching
-notes + the swing-metrics numbers + the Download Swing Video button in the
-middle, and the Phase-by-Phase Match bars on their own on the right. That's
-deliberately not "two columns with everything crammed into the second one" —
-splitting the numbers-heavy phase bars into their own column is what lets
-the whole popup fit a normal landscape screen without needing to scroll.
-The popup itself is sized for that (up to 1360px wide), and each column
-only gets its own scrollbar as a last resort if a window is unusually short.
+your match score and the animated skeleton comparison (plus the Download
+Swing Video button, right underneath it) on the left; coaching notes and the
+swing-metrics numbers in the middle; and the Phase-by-Phase Match bars on
+their own on the right, laid out two-across instead of one long list so
+that column fits without its own scrollbar too. The popup itself is sized
+for that (up to 1360px wide), so the whole thing fits a normal landscape
+screen without needing to scroll.
 
-The swing path in the results popup grows in step with the phase-locked
-comparison animation instead of appearing all at once — split by
-address→top, top→impact, and impact→finish, revealed in that same sequence
-as the skeletons play through those phases, so the path and the "ADDRESS →
-TOP" / "TOP → IMPACT" / "IMPACT → FINISH" label above it always show the
-same moment of the swing. It's built directly from your recorded skeleton
-(the same interpolated wrist position used to draw your hands, resampled at
-fine steps from address up through the current instant) rather than from a
-separately-timestamped capture — the swing path shown live on the camera
-while you're actually swinging still traces the phone's real accelerometer
-motion (useful for a "feel" of the club head in real time), but the results
-comparison's path is tied exactly to where your hands are on screen, so it
-can't drift out of sync the way a separate sensor-timed trace could.
+The swing path — live on the camera and in the results comparison alike —
+is your tracked hand position, full stop. See "How the swing path works"
+below for why that replaced trying to derive it from the phone's
+accelerometer. In the results popup specifically, it grows in step with the
+phase-locked comparison animation instead of appearing all at once —
+split by address→top, top→impact, and impact→finish, revealed in that same
+sequence as the skeletons play through those phases, so the path and the
+"ADDRESS → TOP" / "TOP → IMPACT" / "IMPACT → FINISH" label above it always
+show the same moment of the swing. It's built directly from your recorded
+skeleton (the same interpolated wrist position used to draw your hands,
+resampled at fine steps from address up through the current instant), so it
+can never disagree with where your hands actually are on screen.
 
 Both skeletons in the comparison are drawn in a fixed, address-anchored
 frame instead of being re-centered on the current pose every single frame —
@@ -204,13 +204,52 @@ The **Record** button now says which shot it'll record and compare against —
 whichever tab (Swing / Putting / Chip Shot) is currently selected above the
 Standard Gesture panel.
 
-Alongside the pose-matching score you'll see estimated Swing Speed, Club Speed,
-Club Path, Attack Angle, and Face Angle. Speed and Face Angle come from your
-phone's Club Sensor (connect it first for those to show); Club Path and Attack
-Angle come from the camera. All of these are rough, illustrative estimates
-useful for comparing one swing to the next at home — not numbers from a
-calibrated launch monitor. Impact Location isn't shown, since measuring where
-on the clubface you struck the ball needs a sensor mounted on the club itself,
+## How the swing path works
+
+Hold the phone with both hands at address, facing the camera, tilted
+roughly 45° toward the ground — the camera confirms you're standing that
+way (both hands together, in the address box) before it'll start the
+countdown. Because the phone travels with your two hands for the entire
+swing, its position and your tracked hand position are, for this app's
+purposes, the same thing — so the red swing path is simply drawn from your
+tracked hands, live and in the results, guaranteeing it always lines up
+with them exactly, everywhere it's shown.
+
+An earlier version instead tried to derive the path's shape from the
+phone's own accelerometer — double-integrating raw acceleration
+(accel → velocity → position) to estimate motion, anchored once at address.
+That's the standard technique for this kind of sensor, but it has a
+well-known limitation: without a full orientation sensor (a compass/
+magnetometer, which phone motion APIs don't expose for this), the
+double-integrated position drifts almost immediately, so what was drawn
+was closer to a generic scaled swoosh near the hands than an actual path
+through them — which is exactly why it could visibly detach from your two
+hands holding the phone, or lag behind your real motion. Tracking the
+hands directly sidesteps that limitation entirely, at the cost of not
+capturing club-head extension beyond the hands (which no version of this
+app has ever measured — a full 3D club-head trace needs a sensor mounted
+on the club itself, not held in the hands).
+
+The phone's accelerometer and gyroscope still matter — just for the
+numbers a 2D camera genuinely can't measure on its own (see below), not
+for the path's shape or position.
+
+## Swing metrics
+
+Alongside the pose-matching score you'll see estimated Swing Speed, Club
+Speed, Club Path, and Attack Angle — all four now computed the same way:
+from your tracked swing path around impact, converted from on-screen
+(normalized) distance into a real-world speed using an assumed adult
+shoulder width (~0.40m) as the scale reference, since the camera has no
+other way to know real-world distance. These work whether or not a phone
+is connected, and reflect the actual swing you made rather than a generic
+formula. Face Angle is the one number that still needs the phone's
+gyroscope — a 2D camera can't see the clubface twisting toward or away
+from the target line — so it only shows once a Club Sensor is connected
+and streaming. All of these are rough, illustrative estimates useful for
+comparing one swing to the next at home — not numbers from a calibrated
+launch monitor. Impact Location isn't shown, since measuring where on the
+clubface you struck the ball needs a sensor mounted on the club itself,
 which nothing here provides.
 
 Your phone and computer don't even need to be on the same WiFi — both just need an

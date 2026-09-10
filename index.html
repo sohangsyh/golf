@@ -298,6 +298,7 @@
   .match-body{display:grid;grid-template-columns:1.1fr 1fr 0.85fr;gap:24px;margin-top:22px;align-items:start;}
   @media (max-width:980px){ .match-body{grid-template-columns:1fr 1fr;} .match-phase-col{grid-column:1 / -1;} }
   @media (max-width:640px){ .match-body{grid-template-columns:1fr;} .match-advice-col, .match-phase-col{max-height:none !important;overflow-y:visible !important;} .match-phase-col{grid-column:auto;} }
+  .match-left-col{display:flex;flex-direction:column;}
   .match-compare-wrap{
     position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;
     background:radial-gradient(ellipse at 50% 30%,rgba(46,156,120,.08),transparent 60%), #0a0c0e;
@@ -322,6 +323,12 @@
     padding:12px 16px;font-weight:600;
   }
   #downloadSwingLink.ready{display:flex;}
+  /* Phase-by-Phase Match has up to 4 phases × several metrics each — as one
+     long vertical list of rows that's too tall to fit without scrolling
+     even in its own column. Laid out as 2 columns of shorter rows instead,
+     it covers the same data in roughly half the vertical space. */
+  .match-phase-col .metric-bars{display:grid;grid-template-columns:1fr 1fr;gap:7px 14px;margin-top:0;}
+  .match-phase-col .metric-bar-row{grid-template-columns:72px 1fr 32px;gap:6px;font-size:10.5px;}
   .qr-status.paired{color:var(--emerald-bright);}
 
   .sensor-block{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-border);}
@@ -473,10 +480,13 @@
     </div>
 
     <div class="match-body">
-      <div class="match-compare-wrap">
-        <canvas id="matchCompareCanvas"></canvas>
-        <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
-        <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference<span class="dot path"></span>Swing Path</div>
+      <div class="match-left-col">
+        <div class="match-compare-wrap">
+          <canvas id="matchCompareCanvas"></canvas>
+          <div class="match-phase-label" id="matchPhaseLabel">ADDRESS</div>
+          <div class="match-legend"><span class="dot you"></span>You<span class="dot ref"></span>Reference<span class="dot path"></span>Swing Path</div>
+        </div>
+        <a class="btn btn-outline" id="downloadSwingLink" style="text-decoration:none;margin-top:14px;" download>⬇ Download Swing Video</a>
       </div>
       <div class="match-advice-col">
         <div class="match-col-title">Coaching Notes</div>
@@ -491,10 +501,8 @@
           <div><b id="mImpactLoc">—</b><span>Impact Location</span></div>
         </div>
 
-        <a class="btn btn-outline" id="downloadSwingLink" style="text-decoration:none;margin-top:14px;" download>⬇ Download Swing Video</a>
-
         <p class="small-note" id="metricsNote" style="display:none;margin-top:14px;">
-          Speed/path/angle figures are approximate estimates from your phone's Club Sensor and the camera's skeleton tracking — useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
+          Speed, Club Path, and Attack Angle are estimated from your actual tracked swing path; Face Angle needs a connected Club Sensor. Useful for comparing swing to swing at home, not a substitute for a calibrated launch monitor. Impact Location isn't shown because it needs a clubface-mounted sensor we don't have.
         </p>
       </div>
       <div class="match-phase-col">
@@ -880,7 +888,6 @@ function openPairingChannel(client) {
       if (now - phoneLastHz > 1000) { phHz.textContent = phoneMsgCount; phoneMsgCount = 0; phoneLastHz = now; }
       if (window.capturingMotion) {
         window.motionBuffer.push({ t: performance.now(), ...d });
-        integrateSensorPath(d);
       }
     })
     .on("broadcast", { event: "phone-left" }, () => {
@@ -1489,74 +1496,29 @@ let analyzing=false;
 window.capturingMotion=false;
 window.motionBuffer=[];
 
-// ---- Club Sensor (phone) swing path -------------------------------------
-// The phone streams raw accelerometer + gyroscope samples, not a position —
-// there's no GPS-grade tracking on a device this small, so we derive a
-// relative swing-shape trace from the accelerometer by integrating it twice
-// (accel -> velocity -> position), with a decaying/high-passed velocity so
-// the trace settles back near the anchor point instead of drifting off
-// forever. It's anchored to the hands' on-screen address position (from the
-// camera) so it still overlays correctly on the golfer, but the actual
-// *shape* of the path is driven entirely by the phone's own sensor data.
-let sensorRawTrail=[];           // raw double-integrated points, unscaled — magnitude is meaningless on its own
-let sensorAnchor=null;           // {x,y} normalized video-frame coords, set once at address
-let sensorVX=0, sensorVY=0, sensorPX=0, sensorPY=0, sensorGX=0, sensorGY=0, sensorLastT=null;
-// Time constants (seconds), not raw per-sample multipliers — a per-sample
-// multiplier like *0.9 decays almost to zero within a few hundred ms at a
-// phone's ~50-60Hz sample rate, which was the bug that made the path
-// invisible: the double-integrated position never had a chance to build up
-// before the damping erased it. These are keyed to real time instead.
-// These were originally 1.2 / 0.9 — much slower than a golf swing itself
-// (which is over in well under a second), so the double-integrated path was
-// always lagging behind the actual motion by most of a swing's duration.
-// That's what read as "super delay". Shortened both so the path tracks the
-// swing's own timing much more closely — some drift/noise sensitivity in
-// trade, but sensorDisplayPath()'s auto-scaling already absorbs that.
-const SENSOR_GRAVITY_TAU=0.35;   // low-pass stand-in for gravity/orientation bias, not the swing itself
-const SENSOR_VELOCITY_TAU=0.35;  // velocity leaks away — long enough to hold through a swing, short enough to stay responsive
-const SENSOR_PATH_SPREAD=0.16;   // normalized frame units the path is auto-scaled to span from the anchor
-function resetSensorPath(){
-  sensorRawTrail=[]; sensorAnchor=null;
-  sensorVX=0; sensorVY=0; sensorPX=0; sensorPY=0; sensorGX=0; sensorGY=0; sensorLastT=null;
-}
-function integrateSensorPath(d){
-  const now = performance.now();
-  const dt = sensorLastT!=null ? Math.min(0.05, Math.max(0.001,(now-sensorLastT)/1000)) : 0.02;
-  sensorLastT = now;
-  // low-pass estimate acts as a stand-in for gravity/orientation bias (we
-  // don't have a full orientation filter) — subtracting it out leaves
-  // roughly the "swing" component of the acceleration on each axis
-  const gAlpha = 1 - Math.exp(-dt/SENSOR_GRAVITY_TAU);
-  sensorGX += ((d.ax||0) - sensorGX) * gAlpha;
-  sensorGY += ((d.ay||0) - sensorGY) * gAlpha;
-  const linAX = (d.ax||0) - sensorGX;
-  const linAY = (d.ay||0) - sensorGY;
-  const vDecay = Math.exp(-dt/SENSOR_VELOCITY_TAU);
-  sensorVX = sensorVX*vDecay + linAX*dt;
-  sensorVY = sensorVY*vDecay + linAY*dt;
-  sensorPX += sensorVX*dt;
-  sensorPY += sensorVY*dt;
-  // t uses the SAME performance.now() clock as liveBuffer/phase timestamps,
-  // so the results popup can later split this trail by phase (address→top,
-  // top→impact, impact→finish) and reveal it in sync with the comparison
-  // animation instead of just dumping the whole path on screen at once.
-  sensorRawTrail.push({x:sensorPX, y:sensorPY, t:now});
-  if(sensorRawTrail.length>600) sensorRawTrail.shift();
-}
-// Turns the raw integrated trail into on-screen points, auto-scaled to a
-// visible spread regardless of how big or small the phone's actual
-// acceleration numbers turn out to be — anchored at the hands' address
-// position so it still overlays correctly on the golfer in frame.
-function sensorDisplayPath(){
-  if(!sensorAnchor || sensorRawTrail.length<2) return [];
-  let maxR=0;
-  for(const p of sensorRawTrail){ const r=Math.hypot(p.x,p.y); if(r>maxR) maxR=r; }
-  if(maxR<1e-6) return [];
-  const scale = SENSOR_PATH_SPREAD/maxR;
-  return sensorRawTrail.map(p=>({x: sensorAnchor.x + p.x*scale, y: sensorAnchor.y - p.y*scale, t:p.t}));
-}
-// what's actually drawn each frame — Club Sensor path when a phone is paired
-// and streaming, otherwise the camera hand-tracked path as a fallback
+// ---- Swing path ----------------------------------------------------------
+// This used to try to derive the path's on-screen SHAPE from the phone by
+// double-integrating raw accelerometer samples (accel -> velocity ->
+// position), anchored once at address. That never actually tracked the
+// hands: double-integrated accelerometer position drifts almost
+// immediately without a full orientation filter (no magnetometer on a
+// phone's motion API), so the result was a generic scaled swoosh anchored
+// near the hands rather than a path THROUGH them — which is exactly why
+// the red dot could end up visibly detached from your two hands holding
+// the phone.
+//
+// The setup this app actually asks for makes that unnecessary: you hold
+// the phone with both hands directly in front of you, at the address zone,
+// facing the camera — meaning the phone travels WITH your hands for the
+// entire swing. The camera's own hand tracking already knows exactly where
+// your hands are on screen every frame, which means it already knows where
+// the phone is too. So the swing path is simply your tracked wrist
+// position — guaranteed to always agree with the skeleton and with your
+// actual two hands, live and in the results, because it's the same
+// measurement. The phone's accelerometer/gyroscope are still streamed and
+// still matter — see computeSensorMetrics() below — just for the numbers
+// (speed, face angle) a 2D camera can't measure on its own, not for the
+// path's shape or position.
 let displayPathTrail=[];
 
 // Normalized (0-1) bounds matching the .address-zone box drawn over the
@@ -1689,16 +1651,11 @@ function drawLiveSkeleton(landmarks){
 
 function startCountdown(){
   // start the Club Sensor (phone) capturing right away, before "GO!" — not
-  // at the moment recording starts — so nothing about the swing is missed,
-  // including any early movement while counting down. The anchor for the
-  // sensor-derived path is taken now too, from the hands' address position.
-  resetSensorPath();
+  // at the moment recording starts — so nothing about the swing (and the
+  // metrics computed from it) is missed, including any early movement while
+  // counting down.
   window.motionBuffer = [];
   window.capturingMotion = true;
-  if(lastLM){
-    const lw=lastLM[L.lWrist], rw=lastLM[L.rWrist];
-    sensorAnchor = {x:(lw.x+rw.x)/2, y:(lw.y+rw.y)/2};
-  }
   countdownOverlay.classList.remove("hidden");
   const seq = ["3","2","1","GO!"];
   let i=0;
@@ -1744,13 +1701,11 @@ function trackLoop(){
       if(recording){
         const nowT = performance.now();
         liveBuffer.push({t:nowT, landmarks:lm});
-        // camera-tracked fallback path (hands position) — always collected
-        // so there's still a path if no Club Sensor is paired
+        // the swing path IS the tracked hand position — see the comment
+        // above displayPathTrail's declaration for why this replaced trying
+        // to derive it from the phone's own accelerometer
         const wristMid = {x:(lm[L.lWrist].x+lm[L.rWrist].x)/2, y:(lm[L.lWrist].y+lm[L.rWrist].y)/2, t:nowT};
         pathTrail.push(wristMid);
-        // anchor the sensor-derived path to the hands' position the moment
-        // recording starts (address), so its shape overlays on the golfer
-        if(isPaired && sensorAnchor===null){ sensorAnchor = {x:wristMid.x, y:wristMid.y}; }
 
         // auto-stop once the swing has clearly happened and the hands have
         // settled back down, rather than requiring a manual Stop click
@@ -1765,10 +1720,7 @@ function trackLoop(){
           endRecording();
         }
       }
-      // prefer the Club Sensor (phone) path once it has real samples; fall
-      // back to the camera hand-tracked path when no phone is paired
-      const sensorPath = isPaired ? sensorDisplayPath() : [];
-      displayPathTrail = sensorPath.length>1 ? sensorPath : pathTrail;
+      displayPathTrail = pathTrail;
       if(pathVisible && displayPathTrail.length>1){
         const rect = getCoverRect(overlay.width, overlay.height, video.videoWidth, video.videoHeight);
         octx.save(); octx.translate(rect.x, rect.y);
@@ -1910,19 +1862,27 @@ function endRecording(){
 recordBtn.addEventListener("click", beginRecording);
 stopBtn.addEventListener("click", endRecording);
 document.getElementById("resetBtn").addEventListener("click",()=>{
-  liveBuffer=[]; pathTrail=[]; displayPathTrail=[]; resetSensorPath();
+  liveBuffer=[]; pathTrail=[]; displayPathTrail=[];
   matchOverlay.classList.add("hidden");
   downloadSwingLink.classList.remove("ready");
   resetPhaseTrack();
 });
 
-// Estimates the six swing metrics. Club Path / Attack Angle come from the
-// camera's wrist-path around impact (2D, so treat as a relative trend rather
-// than a precise number). Swing/Club Speed and Face Angle come from the phone
-// Club Sensor's accelerometer/gyroscope when one is connected, using simple
-// illustrative calibration constants — not a lab-calibrated launch monitor.
-// Impact Location genuinely needs a clubface-mounted sensor, so it's reported
-// as not available rather than guessed.
+// Estimates the six swing metrics — all six now grounded in the swing path
+// you actually made (the tracked hand position, same as what's drawn on
+// screen) rather than a generic phone-accelerometer formula. Club Path and
+// Attack Angle were already computed this way (2D, so treat as a relative
+// trend rather than a precise number); Swing Speed and Club Speed now are
+// too — the wrist travel around impact, converted from on-screen
+// (normalized) distance to a real-world distance using an assumed adult
+// shoulder width (~0.40m) as the scale reference, since the camera has no
+// other way to know real-world scale. Face Angle is the one number that
+// still needs the phone's gyroscope: a 2D camera can't see the clubface
+// twisting toward or away from the target line, so it only shows once a
+// Club Sensor is connected and streaming. Impact Location genuinely needs a
+// clubface-mounted sensor, so it's reported as not available rather than
+// guessed.
+const ASSUMED_SHOULDER_WIDTH_M = 0.40;
 function computeSensorMetrics(buffer, motion){
   const n = buffer.length;
   const {topIdx, impactIdx} = computeSwingPhaseIndices(buffer);
@@ -1936,16 +1896,18 @@ function computeSensorMetrics(buffer, motion){
   const shoulderW = Math.hypot(sh[L.lShoulder].x-sh[L.rShoulder].x, sh[L.lShoulder].y-sh[L.rShoulder].y) || 0.2;
   const clubPathDeg = Math.max(-12, Math.min(12, Math.round((dx/shoulderW)*10)));
 
-  let swingSpeedMph=null, clubSpeedMph=null, faceAngleDeg=null;
+  const dt = Math.max(0.02, (buffer[winEnd].t - buffer[winStart].t)/1000);
+  const realDist = (Math.hypot(dx,dy)/shoulderW) * ASSUMED_SHOULDER_WIDTH_M;
+  const handSpeedMph = (realDist/dt) * 2.23694;
+  const swingSpeedMph = Math.round(handSpeedMph);
+  const clubSpeedMph = Math.round(handSpeedMph * 1.4); // the clubhead travels faster than the hands through impact
+
+  let faceAngleDeg=null;
   if(motion && motion.length>4){
-    let peakAcc=0;
-    motion.forEach(m=>{ const g=Math.sqrt((m.ax||0)**2+(m.ay||0)**2+(m.az||0)**2)/9.81; if(g>peakAcc) peakAcc=g; });
-    swingSpeedMph = Math.round(peakAcc*11);
-    clubSpeedMph = Math.round(swingSpeedMph*1.35);
     let rotSum=0;
     for(let i=1;i<motion.length;i++){
-      const dt = Math.max(0.001,(motion[i].t-motion[i-1].t)/1000);
-      rotSum += (motion[i].rb||0)*dt;
+      const dtm = Math.max(0.001,(motion[i].t-motion[i-1].t)/1000);
+      rotSum += (motion[i].rb||0)*dtm;
     }
     faceAngleDeg = Math.max(-15, Math.min(15, Math.round(rotSum/8)));
   }
